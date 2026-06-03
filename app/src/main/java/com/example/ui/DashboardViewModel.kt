@@ -32,6 +32,29 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
             initialValue = 0.0
         )
 
+    val clients: StateFlow<List<com.example.data.Client>> = repository.getClients()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val inventory: StateFlow<List<com.example.data.Inventory>> = repository.getInventory()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val historicalLedgers: StateFlow<List<DailyLedger>> = repository.getLedgers()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val lastSaleDetails = MutableStateFlow<LastSaleDetails?>(null)
+
     val currentMetrics: StateFlow<DashboardMetrics> = combine(
         ledgerForToday,
         totalSalesForToday
@@ -63,14 +86,39 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
     
-    fun addSale(amount: Double) {
+    fun processSale(client: com.example.data.Client, inventoryItem: com.example.data.Inventory, quantity: Int) {
+        if (quantity > inventoryItem.current_stock || quantity <= 0) return
+        
         viewModelScope.launch {
+            val totalAmount = quantity * inventoryItem.sale_price
             val invoice = Invoice(
                 ledger_date = currentDate,
-                client_id = 1, // Defaulting client
-                total_amount = amount
+                client_id = client.id,
+                total_amount = totalAmount
             )
-            repository.insertInvoice(invoice)
+            repository.processSale(invoice, inventoryItem.id, quantity)
+            
+            lastSaleDetails.value = LastSaleDetails(
+                clientName = client.name,
+                itemName = inventoryItem.item_name,
+                quantity = quantity,
+                salePrice = inventoryItem.sale_price,
+                totalAmount = totalAmount
+            )
+        }
+    }
+
+    // Default data initializers for testing
+    fun initTestData() {
+        viewModelScope.launch {
+            if (clients.value.isEmpty()) {
+                repository.insertClient(com.example.data.Client(name = "Client A", contact_info = "123456"))
+                repository.insertClient(com.example.data.Client(name = "Client B", contact_info = "654321"))
+            }
+            if (inventory.value.isEmpty()) {
+                repository.insertInventory(com.example.data.Inventory(item_name = "Caja de Tomate Primera", purchase_price = 5000.0, sale_price = 6000.0, initial_stock = 100, current_stock = 100))
+                repository.insertInventory(com.example.data.Inventory(item_name = "Caja de Tomate Segunda", purchase_price = 3000.0, sale_price = 4500.0, initial_stock = 50, current_stock = 5))
+            }
         }
     }
 }
@@ -80,4 +128,12 @@ data class DashboardMetrics(
     val initialInvestment: Double = 0.0,
     val totalSales: Double = 0.0,
     val netProfit: Double = 0.0
+)
+
+data class LastSaleDetails(
+    val clientName: String,
+    val itemName: String,
+    val quantity: Int,
+    val salePrice: Double,
+    val totalAmount: Double
 )

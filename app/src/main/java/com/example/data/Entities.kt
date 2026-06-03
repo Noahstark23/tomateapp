@@ -10,6 +10,7 @@ data class Inventory(
     val item_name: String,
     val purchase_price: Double,
     val sale_price: Double,
+    val initial_stock: Int,
     val current_stock: Int
 )
 

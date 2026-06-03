@@ -11,6 +11,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -19,8 +20,61 @@ import java.util.Locale
 fun DashboardScreen(viewModel: DashboardViewModel) {
     val metrics by viewModel.currentMetrics.collectAsStateWithLifecycle()
     
+    LaunchedEffect(Unit) {
+        viewModel.initTestData()
+    }
+    
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val lastSale by viewModel.lastSaleDetails.collectAsStateWithLifecycle()
+    
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            lastSale?.let { sale ->
+                coroutineScope.launch {
+                    val service = com.example.printer.PrintService(context)
+                    val success = service.printReceipt(sale.clientName, sale.itemName, sale.quantity, sale.salePrice, sale.totalAmount)
+                    android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else {
+            android.widget.Toast.makeText(context, "Permiso Bluetooth denegado", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        floatingActionButton = {
+            if (lastSale != null) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                coroutineScope.launch {
+                                    val service = com.example.printer.PrintService(context)
+                                    val success = service.printReceipt(lastSale!!.clientName, lastSale!!.itemName, lastSale!!.quantity, lastSale!!.salePrice, lastSale!!.totalAmount)
+                                    android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                permissionLauncher.launch(android.Manifest.permission.BLUETOOTH_CONNECT)
+                            }
+                        } else {
+                            coroutineScope.launch {
+                                val service = com.example.printer.PrintService(context)
+                                val success = service.printReceipt(lastSale!!.clientName, lastSale!!.itemName, lastSale!!.quantity, lastSale!!.salePrice, lastSale!!.totalAmount)
+                                android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    icon = { Text("🖨️") },
+                    text = { Text("Imprimir Boleta") }
+                )
+            }
+        },
         topBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
@@ -76,7 +130,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
             } else {
                 DashboardMetricsView(
                     metrics = metrics,
-                    onAddSale = { viewModel.addSale(it) }
+                    viewModel = viewModel
                 )
             }
         }
@@ -129,9 +183,32 @@ fun StartDayCard(onSubmit: (Double) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardMetricsView(metrics: DashboardMetrics, onAddSale: (Double) -> Unit) {
-    var saleAmountStr by remember { mutableStateOf("") }
+fun DashboardMetricsView(metrics: DashboardMetrics, viewModel: DashboardViewModel) {
+    val clients by viewModel.clients.collectAsStateWithLifecycle()
+    val inventory by viewModel.inventory.collectAsStateWithLifecycle()
+    
+    var selectedClient by remember { mutableStateOf<com.example.data.Client?>(null) }
+    var selectedInventory by remember { mutableStateOf<com.example.data.Inventory?>(null) }
+    var quantityStr by remember { mutableStateOf("") }
+    
+    // Auto-select first item if available
+    LaunchedEffect(clients) {
+        if (selectedClient == null && clients.isNotEmpty()) {
+            selectedClient = clients.first()
+        }
+    }
+    LaunchedEffect(inventory) {
+        if (selectedInventory == null && inventory.isNotEmpty()) {
+            selectedInventory = inventory.first()
+        }
+    }
+
+    var clientExpanded by remember { mutableStateOf(false) }
+    var inventoryExpanded by remember { mutableStateOf(false) }
+    var stockError by remember { mutableStateOf(false) }
+
     val format = remember { NumberFormat.getCurrencyInstance(Locale("es", "CR")) }
     
     Column(
@@ -245,7 +322,7 @@ fun DashboardMetricsView(metrics: DashboardMetrics, onAddSale: (Double) -> Unit)
             }
         }
 
-        // Registrar Venta (Facturas Recientes placeholder)
+        // Registrar Venta (Nueva Venta)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -260,31 +337,103 @@ fun DashboardMetricsView(metrics: DashboardMetrics, onAddSale: (Double) -> Unit)
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Registrar Venta", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Nueva Venta", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 }
                 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1f).padding(bottom = 8.dp)) {
+                    ExposedDropdownMenuBox(
+                        expanded = clientExpanded,
+                        onExpandedChange = { clientExpanded = !clientExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedClient?.name ?: "Seleccione Cliente",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Cliente") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = clientExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = clientExpanded,
+                            onDismissRequest = { clientExpanded = false }
+                        ) {
+                            clients.forEach { client ->
+                                DropdownMenuItem(
+                                    text = { Text(client.name) },
+                                    onClick = {
+                                        selectedClient = client
+                                        clientExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    ExposedDropdownMenuBox(
+                        expanded = inventoryExpanded,
+                        onExpandedChange = { inventoryExpanded = !inventoryExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedInventory?.item_name ?: "Seleccione Producto",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Producto (Stock: ${selectedInventory?.current_stock ?: 0})") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = inventoryExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = inventoryExpanded,
+                            onDismissRequest = { inventoryExpanded = false }
+                        ) {
+                            inventory.forEach { item ->
+                                DropdownMenuItem(
+                                    text = { Text("${item.item_name} - ${format.format(item.sale_price)}") },
+                                    onClick = {
+                                        selectedInventory = item
+                                        inventoryExpanded = false
+                                        stockError = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
                     OutlinedTextField(
-                        value = saleAmountStr,
-                        onValueChange = { saleAmountStr = it },
-                        label = { Text("Monto de Venta (CRC)") },
+                        value = quantityStr,
+                        onValueChange = { 
+                            quantityStr = it
+                            val qty = it.toIntOrNull() ?: 0
+                            stockError = selectedInventory != null && qty > selectedInventory!!.current_stock
+                        },
+                        label = { Text("Cantidad") },
+                        isError = stockError,
+                        supportingText = if (stockError) { { Text("Cantidad excede stock") } } else null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Spacer(modifier = Modifier.weight(1f))
+                    
                     Button(
                         onClick = {
-                            val amount = saleAmountStr.toDoubleOrNull()
-                            if (amount != null) {
-                                onAddSale(amount)
-                                saleAmountStr = ""
+                            val qty = quantityStr.toIntOrNull()
+                            if (qty != null && selectedClient != null && selectedInventory != null && !stockError) {
+                                viewModel.processSale(selectedClient!!, selectedInventory!!, qty)
+                                quantityStr = ""
                             }
                         },
+                        enabled = !stockError && quantityStr.isNotEmpty() && selectedClient != null && selectedInventory != null,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
-                        Text("Registrar", fontWeight = FontWeight.Medium)
+                        Text("Registrar Venta", fontWeight = FontWeight.Medium)
                     }
                 }
             }
