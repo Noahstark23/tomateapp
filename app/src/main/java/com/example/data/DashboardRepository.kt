@@ -12,6 +12,10 @@ class DashboardRepository(private val appDao: AppDao) {
     
     suspend fun insertLedger(ledger: DailyLedger) = appDao.insertLedger(ledger)
     
+    suspend fun updateLedger(ledger: DailyLedger) = appDao.updateLedger(ledger)
+    
+    suspend fun getLedgerForDateSync(date: String): DailyLedger? = appDao.getLedgerForDateSync(date)
+    
     suspend fun insertInvoice(invoice: Invoice) = appDao.insertInvoice(invoice)
     
     fun getInvoicesForDate(date: String): Flow<List<Invoice>> = appDao.getInvoicesForDate(date)

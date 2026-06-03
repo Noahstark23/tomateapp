@@ -23,58 +23,9 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
     LaunchedEffect(Unit) {
         viewModel.initTestData()
     }
-    
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val lastSale by viewModel.lastSaleDetails.collectAsStateWithLifecycle()
-    
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            lastSale?.let { sale ->
-                coroutineScope.launch {
-                    val service = com.example.printer.PrintService(context)
-                    val success = service.printReceipt(sale.clientName, sale.itemName, sale.quantity, sale.salePrice, sale.totalAmount)
-                    android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        } else {
-            android.widget.Toast.makeText(context, "Permiso Bluetooth denegado", android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        floatingActionButton = {
-            if (lastSale != null) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                                coroutineScope.launch {
-                                    val service = com.example.printer.PrintService(context)
-                                    val success = service.printReceipt(lastSale!!.clientName, lastSale!!.itemName, lastSale!!.quantity, lastSale!!.salePrice, lastSale!!.totalAmount)
-                                    android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                permissionLauncher.launch(android.Manifest.permission.BLUETOOTH_CONNECT)
-                            }
-                        } else {
-                            coroutineScope.launch {
-                                val service = com.example.printer.PrintService(context)
-                                val success = service.printReceipt(lastSale!!.clientName, lastSale!!.itemName, lastSale!!.quantity, lastSale!!.salePrice, lastSale!!.totalAmount)
-                                android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    icon = { Text("🖨️") },
-                    text = { Text("Imprimir Boleta") }
-                )
-            }
-        },
         topBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
@@ -126,7 +77,7 @@ fun DashboardScreen(viewModel: DashboardViewModel) {
             contentAlignment = Alignment.TopCenter
         ) {
             if (!metrics.hasLedger) {
-                StartDayCard(onSubmit = { viewModel.startDay(it) })
+                StartDayCard(onSubmit = { viewModel.setInitialInvestment(it) })
             } else {
                 DashboardMetricsView(
                     metrics = metrics,
@@ -188,6 +139,17 @@ fun StartDayCard(onSubmit: (Double) -> Unit) {
 fun DashboardMetricsView(metrics: DashboardMetrics, viewModel: DashboardViewModel) {
     val clients by viewModel.clients.collectAsStateWithLifecycle()
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
+    
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            android.widget.Toast.makeText(context, "Permiso Bluetooth denegado", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     
     var selectedClient by remember { mutableStateOf<com.example.data.Client?>(null) }
     var selectedInventory by remember { mutableStateOf<com.example.data.Inventory?>(null) }
@@ -426,6 +388,30 @@ fun DashboardMetricsView(metrics: DashboardMetrics, viewModel: DashboardViewMode
                             val qty = quantityStr.toIntOrNull()
                             if (qty != null && selectedClient != null && selectedInventory != null && !stockError) {
                                 viewModel.processSale(selectedClient!!, selectedInventory!!, qty)
+                                
+                                val clientName = selectedClient!!.name
+                                val itemName = selectedInventory!!.item_name
+                                val salePrice = selectedInventory!!.sale_price
+                                val totalAmount = qty * salePrice
+                                
+                                val printLogic = {
+                                    coroutineScope.launch {
+                                        val service = com.example.printer.PrintService(context)
+                                        val success = service.printReceipt(clientName, itemName, qty, salePrice, totalAmount)
+                                        android.widget.Toast.makeText(context, if (success) "Impresión enviada" else "Error al imprimir. Verifique BT.", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                    if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                        printLogic()
+                                    } else {
+                                        permissionLauncher.launch(android.Manifest.permission.BLUETOOTH_CONNECT)
+                                    }
+                                } else {
+                                    printLogic()
+                                }
+
                                 quantityStr = ""
                             }
                         },
@@ -433,7 +419,7 @@ fun DashboardMetricsView(metrics: DashboardMetrics, viewModel: DashboardViewMode
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                     ) {
-                        Text("Registrar Venta", fontWeight = FontWeight.Medium)
+                        Text("Vender e Imprimir", fontWeight = FontWeight.Medium)
                     }
                 }
             }

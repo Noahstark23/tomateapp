@@ -76,13 +76,18 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         initialValue = DashboardMetrics()
     )
 
-    fun startDay(investment: Double) {
+    fun setInitialInvestment(investment: Double) {
         viewModelScope.launch {
-            val ledger = DailyLedger(
-                date = currentDate,
-                initial_investment = investment
-            )
-            repository.insertLedger(ledger)
+            val existing = repository.getLedgerForDateSync(currentDate)
+            if (existing == null) {
+                val ledger = DailyLedger(
+                    date = currentDate,
+                    initial_investment = investment
+                )
+                repository.insertLedger(ledger)
+            } else {
+                repository.updateLedger(existing.copy(initial_investment = investment))
+            }
         }
     }
     
