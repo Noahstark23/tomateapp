@@ -1,10 +1,28 @@
 package com.example.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -12,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.theme.CustomOnSuccessVariant
+import com.example.ui.theme.CustomSuccessContainer
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -43,7 +63,7 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            shape = androidx.compose.foundation.shape.CircleShape,
+                            shape = CircleShape,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(40.dp)
                         ) {
@@ -53,7 +73,7 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                         }
                         Column {
                             Text("Reportes y Rentabilidad", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
-                            Text("Análisis de desempeño", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Estado financiero por día", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -77,12 +97,12 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         inventory.forEachIndexed { index, item ->
@@ -102,18 +122,18 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        "Inicial: ${item.initial_stock}",
+                                        "Inicial: ${item.initial_stock} · Valor a costo: ${format.format(item.current_stock * item.purchase_price)}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                
+
                                 val stockColor = if (isLowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                 val stockContainer = if (isLowStock) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                                
+
                                 Surface(
                                     color = stockContainer,
-                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                 ) {
                                     Text(
                                         "${item.current_stock}",
@@ -131,29 +151,29 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     }
                 }
             }
-            
+
             item {
                 Text(
-                    "Rendimiento Histórico (Últimos 30 días)",
+                    "Estado Financiero Diario (Últimos 30 días)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            
+
             items(ledgers.take(30)) { ledger ->
-                val roi = if (ledger.initial_investment > 0) {
-                    ((ledger.total_sales - ledger.initial_investment) / ledger.initial_investment) * 100
+                // Margen neto del día sobre ventas.
+                val margin = if (ledger.total_sales > 0) {
+                    ledger.real_net_profit / ledger.total_sales * 100
                 } else 0.0
-                
-                val roiFormatted = String.format(Locale.US, "%.1f%%", roi)
-                
+                val marginFormatted = String.format(Locale.US, "%.1f%%", margin)
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
@@ -167,50 +187,69 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            
-                            val roiColor = if (roi >= 0) com.example.ui.theme.CustomOnSuccessVariant else MaterialTheme.colorScheme.error
-                            val roiContainer = if (roi >= 0) com.example.ui.theme.CustomSuccessContainer else MaterialTheme.colorScheme.errorContainer
-                            
+
+                            val marginColor = if (margin >= 0) CustomOnSuccessVariant else MaterialTheme.colorScheme.error
+                            val marginContainer = if (margin >= 0) CustomSuccessContainer else MaterialTheme.colorScheme.errorContainer
+
                             Surface(
-                                color = roiContainer,
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                color = marginContainer,
+                                shape = RoundedCornerShape(8.dp),
                             ) {
                                 Text(
-                                    "ROI: $roiFormatted",
+                                    "Margen: $marginFormatted",
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = roiColor
+                                    color = marginColor
                                 )
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.height(12.dp))
-                        
+
                         Row(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Inversión", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(format.format(ledger.initial_investment), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Ventas", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(format.format(ledger.total_sales), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Costo Merc.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(format.format(ledger.total_cogs), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            }
                             Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                                Text("Ganancia", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                val profitColor = if (ledger.net_profit >= 0) com.example.ui.theme.CustomOnSuccessVariant else MaterialTheme.colorScheme.error
+                                Text("Ganancia Real", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val profitColor = if (ledger.real_net_profit >= 0) CustomOnSuccessVariant else MaterialTheme.colorScheme.error
                                 Text(
-                                    format.format(ledger.net_profit),
+                                    format.format(ledger.real_net_profit),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = profitColor
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Gastos", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(format.format(ledger.total_expenses), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Merma", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(format.format(ledger.total_waste_value), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            }
+                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                                Text("Caja Final", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(format.format(ledger.cash_on_hand), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            }
+                        }
                     }
                 }
             }
-            
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
