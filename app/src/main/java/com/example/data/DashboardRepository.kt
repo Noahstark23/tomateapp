@@ -26,6 +26,9 @@ class DashboardRepository(private val appDao: AppDao) {
 
     fun getWasteForDate(date: String): Flow<List<Waste>> = appDao.getWasteForDate(date)
 
+    fun getPurchasesForDate(date: String): Flow<List<InventoryPurchase>> =
+        appDao.getPurchasesForDate(date)
+
     fun getClients(): Flow<List<Client>> = appDao.getClients()
 
     fun getInventory(): Flow<List<Inventory>> = appDao.getInventory()
@@ -59,7 +62,28 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun registerWaste(date: String, inventoryId: Int, quantity: Int, reason: String): Waste? =
         appDao.processWaste(date, inventoryId, quantity, reason)
 
+    /**
+     * Compra/reposición: aumenta stock a costo promedio ponderado y descuenta
+     * caja (no es gasto: el costo golpea el P&L al vender o perder la mercancía).
+     */
+    suspend fun registerPurchase(date: String, inventoryId: Int, quantity: Int, unitCost: Double): InventoryPurchase? =
+        appDao.processPurchase(date, inventoryId, quantity, unitCost)
+
     suspend fun insertClient(client: Client) = appDao.insertClient(client)
 
+    suspend fun updateClient(client: Client) = appDao.updateClient(client)
+
     suspend fun insertInventory(inventory: Inventory) = appDao.insertInventory(inventory)
+
+    suspend fun updateInventory(inventory: Inventory) = appDao.updateInventory(inventory)
+
+    /**
+     * Garantiza un cliente de mostrador para ventas al contado. Idempotente:
+     * consulta la BD directamente (sin carreras con StateFlow).
+     */
+    suspend fun ensureDefaultClient() {
+        if (appDao.countClients() == 0) {
+            appDao.insertClient(Client(name = "Cliente General", contact_info = ""))
+        }
+    }
 }

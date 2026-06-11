@@ -241,6 +241,10 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                                 Text("Merma", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(format.format(ledger.total_waste_value), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                             }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Compras", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(format.format(ledger.total_purchases), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                            }
                             Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                                 Text("Caja Final", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(format.format(ledger.cash_on_hand), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)

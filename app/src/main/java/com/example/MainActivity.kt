@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import com.example.data.AppDatabase
 import com.example.data.DashboardRepository
 import com.example.ui.DashboardScreen
+import com.example.ui.ManagementScreen
 import com.example.ui.ReportsScreen
 import com.example.ui.DashboardViewModel
 import com.example.ui.DashboardViewModelFactory
@@ -58,6 +59,18 @@ class MainActivity : ComponentActivity() {
                 }
               )
               NavigationBarItem(
+                icon = { Text("📦") },
+                label = { Text("Gestión") },
+                selected = currentRoute == "management",
+                onClick = {
+                  navController.navigate("management") {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
+                }
+              )
+              NavigationBarItem(
                 icon = { Text("📈") },
                 label = { Text("Reportes") },
                 selected = currentRoute == "reports",
@@ -74,6 +87,7 @@ class MainActivity : ComponentActivity() {
         ) { padding ->
           NavHost(navController, startDestination = "dashboard", modifier = Modifier.padding(padding)) {
             composable("dashboard") { DashboardScreen(viewModel = viewModel, financialViewModel = financialViewModel) }
+            composable("management") { ManagementScreen(viewModel = viewModel) }
             composable("reports") { ReportsScreen(viewModel = viewModel) }
           }
         }

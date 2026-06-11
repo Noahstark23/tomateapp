@@ -136,6 +136,46 @@ class FinancialEngineTest {
         assertEquals(100.0, FinancialEngine.computeLeakage(20_000.0, 0.0), delta)
     }
 
+    // --- Costo promedio ponderado (compras) -------------------------------------
+
+    @Test
+    fun `wac mezcla el lote existente con el nuevo`() {
+        // 10 cajas a 5.000 + 10 cajas a 7.000 => costo promedio 6.000
+        assertEquals(
+            6_000.0,
+            FinancialEngine.weightedAverageCost(10, 5_000.0, 10, 7_000.0),
+            delta
+        )
+    }
+
+    @Test
+    fun `wac con stock cero usa el costo nuevo`() {
+        assertEquals(
+            7_000.0,
+            FinancialEngine.weightedAverageCost(0, 5_000.0, 10, 7_000.0),
+            delta
+        )
+    }
+
+    @Test
+    fun `wac ignora stock negativo corrupto`() {
+        assertEquals(
+            7_000.0,
+            FinancialEngine.weightedAverageCost(-3, 5_000.0, 10, 7_000.0),
+            delta
+        )
+    }
+
+    @Test
+    fun `wac pondera por cantidades distintas`() {
+        // 30 a 4.000 + 10 a 8.000 => (120k + 80k) / 40 = 5.000
+        assertEquals(
+            5_000.0,
+            FinancialEngine.weightedAverageCost(30, 4_000.0, 10, 8_000.0),
+            delta
+        )
+    }
+
     // --- Proyección de gastos --------------------------------------------------
 
     @Test

@@ -23,13 +23,15 @@ data class Client(
 
 /**
  * Estado financiero diario (P&L + caja). Es una vista materializada:
- * los agregados se recalculan desde invoices/expenses/waste en cada
- * mutación (ver AppDao.recalculateLedger), nunca se suman incrementalmente.
+ * los agregados se recalculan desde invoices/expenses/waste/inventory_purchases
+ * en cada mutación (ver AppDao.recalculateLedger), nunca se suman
+ * incrementalmente.
  *
  * Modelo financiero:
  *  - real_net_profit = total_sales - total_cogs - total_expenses - total_waste_value
- *    (la inversión inicial es capital de trabajo, NO un costo)
- *  - cash_on_hand    = initial_investment + total_sales - total_expenses
+ *    (la inversión inicial es capital de trabajo, NO un costo; las compras de
+ *    inventario tampoco son costo: su valor golpea el P&L al venderse o perderse)
+ *  - cash_on_hand    = initial_investment + total_sales - total_expenses - total_purchases
  *    (la merma destruye valor de inventario pero no toca el efectivo)
  */
 @Entity(tableName = "daily_ledgers")
@@ -40,6 +42,7 @@ data class DailyLedger(
     val total_cogs: Double = 0.0,
     val total_expenses: Double = 0.0,
     val total_waste_value: Double = 0.0,
+    val total_purchases: Double = 0.0,
     val real_net_profit: Double = 0.0,
     val cash_on_hand: Double = 0.0
 )
@@ -102,6 +105,27 @@ data class Waste(
     val quantity: Int,
     val financial_loss: Double,
     val reason: String = "",
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+/**
+ * Compra/reposición de inventario: convierte efectivo en mercancía. Reduce
+ * cash_on_hand pero NO la ganancia (no es un gasto: el costo golpea el P&L
+ * cuando la mercancía se vende como COGS o se pierde como merma). Al
+ * registrarla, el purchase_price del producto se actualiza a costo promedio
+ * ponderado (ver FinancialEngine.weightedAverageCost).
+ */
+@Entity(
+    tableName = "inventory_purchases",
+    indices = [Index("ledger_date"), Index("inventory_id")]
+)
+data class InventoryPurchase(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ledger_date: String,
+    val inventory_id: Int,
+    val quantity: Int,
+    val unit_cost: Double,
+    val total_cost: Double,
     val timestamp: Long = System.currentTimeMillis()
 )
 

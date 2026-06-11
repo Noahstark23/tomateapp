@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.example.finance.FinancialEngine
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -67,6 +68,16 @@ interface AppDao {
     fun getWasteForDate(date: String): Flow<List<Waste>>
 
     // ---------------------------------------------------------------------
+    // Compras de inventario
+    // ---------------------------------------------------------------------
+
+    @Insert
+    suspend fun insertPurchase(purchase: InventoryPurchase)
+
+    @Query("SELECT * FROM inventory_purchases WHERE ledger_date = :date ORDER BY timestamp DESC")
+    fun getPurchasesForDate(date: String): Flow<List<InventoryPurchase>>
+
+    // ---------------------------------------------------------------------
     // Clientes e inventario
     // ---------------------------------------------------------------------
 
@@ -76,11 +87,20 @@ interface AppDao {
     @Insert
     suspend fun insertClient(client: Client)
 
+    @Update
+    suspend fun updateClient(client: Client)
+
+    @Query("SELECT COUNT(*) FROM clients")
+    suspend fun countClients(): Int
+
     @Query("SELECT * FROM inventory")
     fun getInventory(): Flow<List<Inventory>>
 
     @Insert
     suspend fun insertInventory(inventory: Inventory)
+
+    @Update
+    suspend fun updateInventory(inventory: Inventory)
 
     @Query("SELECT * FROM inventory WHERE id = :inventoryId LIMIT 1")
     suspend fun getInventoryByIdSync(inventoryId: Int): Inventory?
@@ -104,6 +124,9 @@ interface AppDao {
     @Query("SELECT COALESCE(SUM(financial_loss), 0) FROM waste WHERE ledger_date = :date")
     suspend fun sumWasteForDate(date: String): Double
 
+    @Query("SELECT COALESCE(SUM(total_cost), 0) FROM inventory_purchases WHERE ledger_date = :date")
+    suspend fun sumPurchasesForDate(date: String): Double
+
     // ---------------------------------------------------------------------
     // Transacciones de negocio
     // ---------------------------------------------------------------------
@@ -111,7 +134,8 @@ interface AppDao {
     /**
      * Recalcula el estado financiero del día desde las tablas fuente.
      * Ganancia real = ventas - COGS - gastos - merma (la inversión inicial
-     * es capital de trabajo, no un costo). La merma no toca el efectivo.
+     * es capital de trabajo, no un costo). La merma no toca el efectivo;
+     * las compras de inventario tocan el efectivo pero no la ganancia.
      */
     @Transaction
     suspend fun recalculateLedger(date: String) {
@@ -120,14 +144,16 @@ interface AppDao {
         val cogs = sumCogsForDate(date)
         val expenses = sumExpensesForDate(date)
         val waste = sumWasteForDate(date)
+        val purchases = sumPurchasesForDate(date)
         updateLedger(
             ledger.copy(
                 total_sales = sales,
                 total_cogs = cogs,
                 total_expenses = expenses,
                 total_waste_value = waste,
+                total_purchases = purchases,
                 real_net_profit = sales - cogs - expenses - waste,
-                cash_on_hand = ledger.initial_investment + sales - expenses
+                cash_on_hand = ledger.initial_investment + sales - expenses - purchases
             )
         )
     }
@@ -186,6 +212,41 @@ interface AppDao {
     suspend fun processExpense(expense: Expense) {
         insertExpense(expense)
         recalculateLedger(expense.ledger_date)
+    }
+
+    /**
+     * Compra/reposición de inventario: aumenta stock, actualiza el costo del
+     * producto a promedio ponderado y descuenta la caja del día. Devuelve la
+     * compra creada, o null si los datos no son válidos.
+     */
+    @Transaction
+    suspend fun processPurchase(date: String, inventoryId: Int, quantity: Int, unitCost: Double): InventoryPurchase? {
+        val item = getInventoryByIdSync(inventoryId) ?: return null
+        if (quantity <= 0 || unitCost < 0) return null
+
+        val newAverageCost = FinancialEngine.weightedAverageCost(
+            currentQty = item.current_stock,
+            currentUnitCost = item.purchase_price,
+            addedQty = quantity,
+            addedUnitCost = unitCost
+        )
+        updateInventory(
+            item.copy(
+                current_stock = item.current_stock + quantity,
+                purchase_price = newAverageCost
+            )
+        )
+
+        val purchase = InventoryPurchase(
+            ledger_date = date,
+            inventory_id = inventoryId,
+            quantity = quantity,
+            unit_cost = unitCost,
+            total_cost = quantity * unitCost
+        )
+        insertPurchase(purchase)
+        recalculateLedger(date)
+        return purchase
     }
 
     /**
