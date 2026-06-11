@@ -27,6 +27,11 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
 
     private val currentDate = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
 
+    init {
+        // Cliente de mostrador para ventas al contado; idempotente contra la BD.
+        viewModelScope.launch { repository.ensureDefaultClient() }
+    }
+
     val ledgerForToday: StateFlow<DailyLedger?> = repository.getLedgerForDate(currentDate)
         .stateIn(
             scope = viewModelScope,
@@ -137,17 +142,56 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
-    // Default data initializers for testing
-    fun initTestData() {
+    // --- Gestión de inventario ----------------------------------------------
+
+    /**
+     * Alta de producto. El stock inicial es mercancía que ya posees (como la
+     * inversión inicial es efectivo que ya posees): NO descuenta caja. Las
+     * reposiciones posteriores se registran como compras, que sí la descuentan.
+     */
+    fun addProduct(name: String, purchasePrice: Double, salePrice: Double, initialStock: Int) {
+        if (name.isBlank() || purchasePrice < 0 || salePrice < 0 || initialStock < 0) return
         viewModelScope.launch {
-            if (clients.value.isEmpty()) {
-                repository.insertClient(Client(name = "Client A", contact_info = "123456"))
-                repository.insertClient(Client(name = "Client B", contact_info = "654321"))
-            }
-            if (inventory.value.isEmpty()) {
-                repository.insertInventory(Inventory(item_name = "Caja de Tomate Primera", purchase_price = 5000.0, sale_price = 6000.0, initial_stock = 100, current_stock = 100))
-                repository.insertInventory(Inventory(item_name = "Caja de Tomate Segunda", purchase_price = 3000.0, sale_price = 4500.0, initial_stock = 50, current_stock = 5))
-            }
+            repository.insertInventory(
+                Inventory(
+                    item_name = name.trim(),
+                    purchase_price = purchasePrice,
+                    sale_price = salePrice,
+                    initial_stock = initialStock,
+                    current_stock = initialStock
+                )
+            )
+        }
+    }
+
+    fun updateProduct(item: Inventory) {
+        if (item.item_name.isBlank() || item.purchase_price < 0 || item.sale_price < 0) return
+        viewModelScope.launch {
+            repository.updateInventory(item.copy(item_name = item.item_name.trim()))
+        }
+    }
+
+    /** Compra/reposición: aumenta stock (costo promedio ponderado) y descuenta caja. */
+    fun restockProduct(item: Inventory, quantity: Int, unitCost: Double) {
+        if (quantity <= 0 || unitCost < 0) return
+        viewModelScope.launch {
+            repository.registerPurchase(currentDate, item.id, quantity, unitCost)
+        }
+    }
+
+    // --- Gestión de clientes --------------------------------------------------
+
+    fun addClient(name: String, contactInfo: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            repository.insertClient(Client(name = name.trim(), contact_info = contactInfo.trim()))
+        }
+    }
+
+    fun updateClient(client: Client) {
+        if (client.name.isBlank()) return
+        viewModelScope.launch {
+            repository.updateClient(client.copy(name = client.name.trim(), contact_info = client.contact_info.trim()))
         }
     }
 }

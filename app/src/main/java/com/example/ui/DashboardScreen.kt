@@ -39,7 +39,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,10 +98,6 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
 
     var activeDialog by remember { mutableStateOf<QuickAction?>(null) }
-
-    LaunchedEffect(Unit) {
-        viewModel.initTestData()
-    }
 
     val format = remember { NumberFormat.getCurrencyInstance(Locale("es", "CR")) }
 
@@ -730,6 +725,14 @@ private fun SaleDialog(
         title = { Text("Nueva Venta", fontWeight = FontWeight.Bold) },
         text = {
             Column {
+                if (inventory.isEmpty()) {
+                    Text(
+                        "No hay productos en inventario. Agrégalos en la pestaña Gestión.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
                 ExposedDropdownMenuBox(
                     expanded = clientExpanded,
                     onExpandedChange = { clientExpanded = !clientExpanded }
@@ -998,6 +1001,14 @@ private fun WasteDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(12.dp))
+                if (inventory.isEmpty()) {
+                    Text(
+                        "No hay productos en inventario. Agrégalos en la pestaña Gestión.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 ExposedDropdownMenuBox(
                     expanded = inventoryExpanded,

@@ -123,4 +123,24 @@ object FinancialEngine {
      */
     fun projectDailyExpenses(recentDailyExpenses: List<Double>, fallback: Double): Double =
         if (recentDailyExpenses.isEmpty()) fallback else recentDailyExpenses.average()
+
+    /**
+     * Costo promedio ponderado (WAC) tras una compra de inventario: mezcla el
+     * lote existente con el nuevo para valorar COGS y mermas futuras sin
+     * corromper la historia (las facturas ya congelan su costo al vender).
+     *
+     *   WAC = (stock*costo_actual + compra*costo_nuevo) / (stock + compra)
+     */
+    fun weightedAverageCost(
+        currentQty: Int,
+        currentUnitCost: Double,
+        addedQty: Int,
+        addedUnitCost: Double
+    ): Double {
+        // Un stock corrupto (negativo) no debe envenenar el promedio.
+        val safeCurrentQty = max(currentQty, 0)
+        val totalQty = safeCurrentQty + addedQty
+        if (totalQty <= 0) return addedUnitCost
+        return (safeCurrentQty * currentUnitCost + addedQty * addedUnitCost) / totalQty
+    }
 }

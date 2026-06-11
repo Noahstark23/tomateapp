@@ -12,9 +12,10 @@ import androidx.room.RoomDatabase
         DailyLedger::class,
         Invoice::class,
         Expense::class,
-        Waste::class
+        Waste::class,
+        InventoryPurchase::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
