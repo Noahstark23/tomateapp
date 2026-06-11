@@ -22,6 +22,7 @@ import com.example.ui.DashboardScreen
 import com.example.ui.ReportsScreen
 import com.example.ui.DashboardViewModel
 import com.example.ui.DashboardViewModelFactory
+import com.example.ui.FinancialViewModel
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
     setContent {
       MyApplicationTheme {
         val viewModel: DashboardViewModel = viewModel(factory = factory)
+        val financialViewModel: FinancialViewModel = viewModel(factory = factory)
         val navController = rememberNavController()
         val navBackStackEntry = navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry.value?.destination?.route
@@ -71,7 +73,7 @@ class MainActivity : ComponentActivity() {
           }
         ) { padding ->
           NavHost(navController, startDestination = "dashboard", modifier = Modifier.padding(padding)) {
-            composable("dashboard") { DashboardScreen(viewModel = viewModel) }
+            composable("dashboard") { DashboardScreen(viewModel = viewModel, financialViewModel = financialViewModel) }
             composable("reports") { ReportsScreen(viewModel = viewModel) }
           }
         }
