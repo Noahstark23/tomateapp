@@ -138,6 +138,17 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
+    /**
+     * Da de alta un cliente (nombre + teléfono ya sanitizado) y lo devuelve
+     * con su id para poder seleccionarlo inmediatamente. Callback con el
+     * resultado porque Room genera el id al insertar.
+     */
+    fun addClient(name: String, phone: String, onAdded: (Client) -> Unit = {}) {
+        viewModelScope.launch {
+            onAdded(repository.addClient(name, phone))
+        }
+    }
+
     // Datos semilla solo para desarrollo: en release la bodega empieza vacía
     // y el operador registra sus propios clientes e inventario.
     fun initTestData() {

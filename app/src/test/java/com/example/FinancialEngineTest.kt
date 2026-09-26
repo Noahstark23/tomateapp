@@ -151,4 +151,35 @@ class FinancialEngineTest {
             delta
         )
     }
+
+    // --- Predicción simple de caja ---------------------------------------------
+
+    @Test
+    fun `proyeccion de caja suma el neto diario 7 dias`() {
+        // Caja 150k, ventas promedio 12k, gastos 10k => neto +2k/día
+        val projected = FinancialEngine.projectCash7Days(
+            currentCash = 150_000.0, avgDailySales = 12_000.0, projectedDailyExpenses = 10_000.0
+        )
+        assertEquals(7, projected.size)
+        assertEquals(152_000.0, projected[0], delta)
+        assertEquals(164_000.0, projected[6], delta)
+    }
+
+    @Test
+    fun `quiebre detecta el primer dia bajo cero`() {
+        // Caja 10k, neto -4k/día => días: 6k, 2k, -2k => quiebre día 3
+        val projected = FinancialEngine.projectCash7Days(
+            currentCash = 10_000.0, avgDailySales = 0.0, projectedDailyExpenses = 4_000.0
+        )
+        assertEquals(3, FinancialEngine.findBreakEvenDay(projected))
+    }
+
+    @Test
+    fun `sin quiebre devuelve null`() {
+        val projected = FinancialEngine.projectCash7Days(
+            currentCash = 150_000.0, avgDailySales = 12_000.0, projectedDailyExpenses = 10_000.0
+        )
+        assertNull(FinancialEngine.findBreakEvenDay(projected))
+        assertNull(FinancialEngine.findBreakEvenDay(emptyList()))
+    }
 }

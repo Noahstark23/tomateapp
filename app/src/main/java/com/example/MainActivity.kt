@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import com.example.data.AppDatabase
 import com.example.data.DashboardRepository
+import com.example.ui.CashFlowScreen
 import com.example.ui.DashboardScreen
 import com.example.ui.ReportsScreen
 import com.example.ui.DashboardViewModel
@@ -58,6 +59,18 @@ class MainActivity : ComponentActivity() {
                 }
               )
               NavigationBarItem(
+                icon = { Text("💰") },
+                label = { Text("Caja") },
+                selected = currentRoute == "cash",
+                onClick = {
+                  navController.navigate("cash") {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
+                }
+              )
+              NavigationBarItem(
                 icon = { Text("📈") },
                 label = { Text("Reportes") },
                 selected = currentRoute == "reports",
@@ -74,6 +87,7 @@ class MainActivity : ComponentActivity() {
         ) { padding ->
           NavHost(navController, startDestination = "dashboard", modifier = Modifier.padding(padding)) {
             composable("dashboard") { DashboardScreen(viewModel = viewModel, financialViewModel = financialViewModel) }
+            composable("cash") { CashFlowScreen(financialViewModel = financialViewModel) }
             composable("reports") { ReportsScreen(viewModel = viewModel) }
           }
         }

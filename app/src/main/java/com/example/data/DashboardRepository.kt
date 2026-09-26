@@ -26,6 +26,14 @@ class DashboardRepository(private val appDao: AppDao) {
 
     fun getWasteForDate(date: String): Flow<List<Waste>> = appDao.getWasteForDate(date)
 
+    fun getSalesByProduct(date: String): Flow<List<SalesByProduct>> =
+        appDao.getSalesByProduct(date)
+
+    suspend fun getSalesSummary(date: String): SalesSummary = appDao.getSalesSummary(date)
+
+    fun getLedgersBetween(start: String, end: String): Flow<List<DailyLedger>> =
+        appDao.getLedgersBetween(start, end)
+
     fun getClients(): Flow<List<Client>> = appDao.getClients()
 
     fun getInventory(): Flow<List<Inventory>> = appDao.getInventory()
@@ -59,7 +67,13 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun registerWaste(date: String, inventoryId: Int, quantity: Int, reason: String): Waste? =
         appDao.processWaste(date, inventoryId, quantity, reason)
 
-    suspend fun insertClient(client: Client) = appDao.insertClient(client)
+    suspend fun insertClient(client: Client): Long = appDao.insertClient(client)
+
+    /** Da de alta un cliente y lo devuelve con su id para seleccionarlo de una vez. */
+    suspend fun addClient(name: String, phone: String): Client {
+        val id = appDao.insertClient(Client(name = name, contact_info = phone))
+        return Client(id = id.toInt(), name = name, contact_info = phone)
+    }
 
     suspend fun insertInventory(inventory: Inventory) = appDao.insertInventory(inventory)
 }

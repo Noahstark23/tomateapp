@@ -36,10 +36,15 @@ Detalle completo: `docs/BUILD_RUN.md`.
    (caja − reposición − gastos proyectados − fondo 15%), KPIs (ventas, ganancia real, gastos, merma + fuga 7d),
    gráfica apilada 7 días, acciones rápidas.
 3. **Registrar Venta**: cliente + producto + cantidad, valida stock, congela costo, calcula total/ganancia,
-   intenta imprimir ticket ESC/POS por Bluetooth (`PrintService`).
+   intenta imprimir ticket ESC/POS por Bluetooth (`PrintService`). Botón "+ Nuevo cliente" y "💬 WhatsApp"
+   con mensaje de pedido pre-llenado.
 4. **Registrar Gasto**: categoría TRANSPORTE/SALARIO/EMPAQUE/OTROS + monto + descripción.
 5. **Registrar Merma**: producto + cantidad + motivo, valora pérdida a costo (no toca caja).
-6. **Reportes**: inventario (stock + valor a costo) y P&L diario últimos 30 días.
+6. **👤 Clientes y Proveedores**: alta con teléfono validado, WhatsApp por fila y mensaje libre a
+   proveedor con plantilla de cotización.
+7. **💰 Caja**: entradas vs salidas del día, neto caja vs ganancia real, predicción simple 7 días con
+   alerta de quiebre de caja.
+8. **Reportes**: inventario (stock + valor a costo) y P&L diario últimos 30 días.
 
 ## Mapa de docs
 
@@ -53,6 +58,7 @@ Detalle completo: `docs/BUILD_RUN.md`.
 | `docs/BUILD_RUN.md` | Compilar/correr en Mac sin Android Studio |
 | `docs/TESTING_QA.md` | Tests + checklist para declarar done hoy |
 | `docs/USER_GUIDE_OPERADOR.md` | Hoja 1-página para el bodeguero |
+| `docs/CAJA_CLIENTES.md` | Flujo de caja + clientes/WhatsApp v0.2.0 y diseño Créditos Fase 2 |
 | `docs/ROADMAP_HOY.md` | Plan <8h para terminar hoy |
 | `docs/BACKLOG.md` | Parking post-hoy + deuda conocida |
 | `CHANGELOG.md` | Historial de versiones |

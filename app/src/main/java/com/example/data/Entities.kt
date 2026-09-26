@@ -110,3 +110,18 @@ data class CategoryTotal(
     val category: ExpenseCategory,
     val total: Double
 )
+
+/** Entradas del día agrupadas por producto (no es tabla). */
+data class SalesByProduct(
+    val itemName: String,
+    val inventoryId: Int,
+    val quantity: Int,
+    val total: Double
+)
+
+/** Resumen de facturación del día (no es tabla). */
+data class SalesSummary(
+    val invoiceCount: Int,
+    val totalSales: Double,
+    val avgTicket: Double
+)

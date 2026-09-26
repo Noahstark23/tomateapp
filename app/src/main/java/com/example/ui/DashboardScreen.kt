@@ -82,9 +82,9 @@ import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT }
+private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT, CLIENTS }
 
-private fun ExpenseCategory.displayName(): String = when (this) {
+fun ExpenseCategory.displayName(): String = when (this) {
     ExpenseCategory.TRANSPORTE -> "Transporte"
     ExpenseCategory.SALARIO -> "Salario"
     ExpenseCategory.EMPAQUE -> "Empaque"
@@ -156,7 +156,8 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                     QuickActionsSection(
                         onSale = { activeDialog = QuickAction.SALE },
                         onExpense = { activeDialog = QuickAction.EXPENSE },
-                        onWaste = { activeDialog = QuickAction.WASTE }
+                        onWaste = { activeDialog = QuickAction.WASTE },
+                        onClients = { activeDialog = QuickAction.CLIENTS }
                     )
                 }
             }
@@ -169,6 +170,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             inventory = inventory,
             format = format,
             onConfirm = { client, item, qty -> viewModel.processSale(client, item, qty) },
+            onAddClient = { name, phone, onAdded -> viewModel.addClient(name, phone, onAdded) },
             onDismiss = { activeDialog = null }
         )
         QuickAction.EXPENSE -> ExpenseDialog(
@@ -186,6 +188,11 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
         QuickAction.ADJUST_INVESTMENT -> AdjustInvestmentDialog(
             currentInvestment = metrics.initialInvestment,
             onConfirm = { viewModel.setInitialInvestment(it) },
+            onDismiss = { activeDialog = null }
+        )
+        QuickAction.CLIENTS -> ClientsDialog(
+            clients = clients,
+            onAddClient = { name, phone, onAdded -> viewModel.addClient(name, phone, onAdded) },
             onDismiss = { activeDialog = null }
         )
         null -> Unit
@@ -595,7 +602,8 @@ private fun LeakageChartCard(breakdown: List<DailyBreakdown>, leakagePercent: Do
 private fun QuickActionsSection(
     onSale: () -> Unit,
     onExpense: () -> Unit,
-    onWaste: () -> Unit
+    onWaste: () -> Unit,
+    onClients: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(
@@ -629,6 +637,15 @@ private fun QuickActionsSection(
             ) {
                 Text("🗑️ Registrar Merma", fontWeight = FontWeight.Medium)
             }
+        }
+        OutlinedButton(
+            onClick = onClients,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("👤 Clientes y Proveedores", fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -702,6 +719,7 @@ private fun SaleDialog(
     inventory: List<Inventory>,
     format: NumberFormat,
     onConfirm: (Client, Inventory, Int) -> Unit,
+    onAddClient: (String, String, (Client) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -720,10 +738,19 @@ private fun SaleDialog(
     var quantityStr by remember { mutableStateOf("") }
     var clientExpanded by remember { mutableStateOf(false) }
     var inventoryExpanded by remember { mutableStateOf(false) }
+    var showAddClient by remember { mutableStateOf(false) }
+
+    // Si la lista de clientes crece (alta nueva), selecciona al recién creado.
+    LaunchedEffect(clients.size) {
+        if (selectedClient != null && clients.none { it.id == selectedClient?.id }) {
+            selectedClient = clients.firstOrNull()
+        }
+    }
 
     val quantity = quantityStr.toIntOrNull() ?: 0
     val stockError = selectedInventory != null && quantity > (selectedInventory?.current_stock ?: 0)
     val canConfirm = quantity > 0 && !stockError && selectedClient != null && selectedInventory != null
+    val clientPhoneValid = selectedClient?.let { PhoneUtils.isValidCrPhone(it.contact_info) } == true
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -757,6 +784,44 @@ private fun SaleDialog(
                             )
                         }
                     }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showAddClient = true }) {
+                        Text("+ Nuevo cliente", fontWeight = FontWeight.Medium)
+                    }
+                    val client = selectedClient
+                    val item = selectedInventory
+                    TextButton(
+                        onClick = {
+                            if (client == null || item == null || quantity <= 0) return@TextButton
+                            val total = quantity * item.sale_price
+                            val today = java.time.LocalDate.now()
+                                .format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"))
+                            PhoneUtils.openWhatsApp(
+                                context,
+                                client.contact_info,
+                                "Hola ${client.name} 🍅, soy TomateApp. Su pedido: $quantity x ${item.item_name} = ${format.format(total)}. Fecha $today. Gracias por su compra."
+                            )
+                        },
+                        enabled = clientPhoneValid && quantity > 0 && !stockError && selectedInventory != null
+                    ) {
+                        Text("💬 WhatsApp", fontWeight = FontWeight.Medium)
+                    }
+                }
+
+                if (showAddClient) {
+                    AddClientDialog(
+                        onConfirm = { name, phone ->
+                            onAddClient(name, phone) { added -> selectedClient = added }
+                            showAddClient = false
+                        },
+                        onDismiss = { showAddClient = false }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1134,4 +1199,180 @@ private fun AdjustInvestmentDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
+}
+
+// ---------------------------------------------------------------------------
+// Diálogos: Clientes (alta + WhatsApp + mensaje a proveedor)
+// ---------------------------------------------------------------------------
+
+/**
+ * Alta de cliente: nombre + teléfono tico. El teléfono se sanitiza a solo
+ * dígitos y se guarda en `Client.contact_info` (convención Fase 1, sin schema).
+ */
+@Composable
+fun AddClientDialog(
+    onConfirm: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+
+    val cleanName = name.trim()
+    val phoneOk = PhoneUtils.isValidCrPhone(phone)
+    val canConfirm = cleanName.isNotEmpty() && cleanName.length <= 60 && phoneOk
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nuevo Cliente", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre (ej. Soda La Esquina)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Teléfono (ej. 8888-1234)") },
+                    isError = phone.isNotEmpty() && !phoneOk,
+                    supportingText = if (phone.isNotEmpty() && !phoneOk) {
+                        { Text("Teléfono tico: 8 dígitos o +506 + 8 dígitos") }
+                    } else null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(cleanName, PhoneUtils.sanitize(phone))
+                },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Guardar")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+/**
+ * Clientes y proveedores: lista con WhatsApp por fila, alta nueva y mensaje
+ * libre a proveedor (plantilla de cotización editable, no se guarda en BD).
+ */
+@Composable
+private fun ClientsDialog(
+    clients: List<Client>,
+    onAddClient: (String, String, (Client) -> Unit) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var showAddClient by remember { mutableStateOf(false) }
+    var supplierPhone by remember { mutableStateOf("") }
+    var supplierMessage by remember {
+        mutableStateOf(
+            "Hola, soy TomateApp 🍅. Necesito cotización de tomate para esta semana. ¿Precio por caja y disponibilidad? Gracias."
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clientes y Proveedores", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                clients.forEach { client ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(client.name, fontWeight = FontWeight.Medium)
+                            Text(
+                                client.contact_info.ifEmpty { "Sin teléfono" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                PhoneUtils.openWhatsApp(
+                                    context,
+                                    client.contact_info,
+                                    "Hola ${client.name}, le escribe TomateApp 🍅. ¿Confirmamos el pedido de hoy? Gracias."
+                                )
+                            },
+                            enabled = PhoneUtils.isValidCrPhone(client.contact_info)
+                        ) {
+                            Text("💬")
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                }
+
+                TextButton(onClick = { showAddClient = true }) {
+                    Text("+ Agregar cliente", fontWeight = FontWeight.Medium)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Mensaje a proveedor",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = supplierPhone,
+                    onValueChange = { supplierPhone = it },
+                    label = { Text("Teléfono proveedor") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = supplierMessage,
+                    onValueChange = { supplierMessage = it },
+                    label = { Text("Mensaje") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    minLines = 2
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { PhoneUtils.openWhatsApp(context, supplierPhone, supplierMessage) },
+                    enabled = PhoneUtils.isValidCrPhone(supplierPhone) && supplierMessage.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("💬 Enviar por WhatsApp", fontWeight = FontWeight.Medium)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+
+    if (showAddClient) {
+        AddClientDialog(
+            onConfirm = { name, phone -> onAddClient(name, phone) {} },
+            onDismiss = { showAddClient = false }
+        )
+    }
 }

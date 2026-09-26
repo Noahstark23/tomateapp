@@ -74,7 +74,7 @@ interface AppDao {
     fun getClients(): Flow<List<Client>>
 
     @Insert
-    suspend fun insertClient(client: Client)
+    suspend fun insertClient(client: Client): Long
 
     @Query("SELECT * FROM inventory")
     fun getInventory(): Flow<List<Inventory>>
@@ -103,6 +103,28 @@ interface AppDao {
 
     @Query("SELECT COALESCE(SUM(financial_loss), 0) FROM waste WHERE ledger_date = :date")
     suspend fun sumWasteForDate(date: String): Double
+
+    // ---------------------------------------------------------------------
+    // Flujo de caja (solo lectura: desgloses para el tab Caja)
+    // ---------------------------------------------------------------------
+
+    @Query(
+        "SELECT inv.item_name AS itemName, i.inventory_id AS inventoryId, " +
+            "SUM(i.quantity) AS quantity, SUM(i.total_amount) AS total " +
+            "FROM invoices i JOIN inventory inv ON inv.id = i.inventory_id " +
+            "WHERE i.ledger_date = :date " +
+            "GROUP BY i.inventory_id, inv.item_name ORDER BY total DESC"
+    )
+    fun getSalesByProduct(date: String): Flow<List<SalesByProduct>>
+
+    @Query(
+        "SELECT COUNT(*) AS invoiceCount, COALESCE(SUM(total_amount), 0) AS totalSales, " +
+            "COALESCE(AVG(total_amount), 0) AS avgTicket FROM invoices WHERE ledger_date = :date"
+    )
+    suspend fun getSalesSummary(date: String): SalesSummary
+
+    @Query("SELECT * FROM daily_ledgers WHERE date BETWEEN :start AND :end ORDER BY date DESC")
+    fun getLedgersBetween(start: String, end: String): Flow<List<DailyLedger>>
 
     // ---------------------------------------------------------------------
     // Transacciones de negocio

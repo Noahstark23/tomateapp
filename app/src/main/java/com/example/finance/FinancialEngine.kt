@@ -123,4 +123,26 @@ object FinancialEngine {
      */
     fun projectDailyExpenses(recentDailyExpenses: List<Double>, fallback: Double): Double =
         if (recentDailyExpenses.isEmpty()) fallback else recentDailyExpenses.average()
+
+    /**
+     * Predicción simple de caja a 7 días (memoria, sin Android): supone ritmo
+     * promedio constante — ventas promedio menos gasto proyectado — sin nuevos
+     * aportes ni ventas a crédito. Devuelve la caja proyectada día 1..7.
+     */
+    fun projectCash7Days(
+        currentCash: Double,
+        avgDailySales: Double,
+        projectedDailyExpenses: Double,
+        days: Int = 7
+    ): List<Double> {
+        val net = avgDailySales - projectedDailyExpenses
+        return (1..days).map { currentCash + it * net }
+    }
+
+    /**
+     * Día (1..N) en que la proyección cruza cero, o null si no hay quiebre
+     * en el horizonte.
+     */
+    fun findBreakEvenDay(projectedCash: List<Double>): Int? =
+        projectedCash.indexOfFirst { it < 0.0 }.takeIf { it >= 0 }?.plus(1)
 }
