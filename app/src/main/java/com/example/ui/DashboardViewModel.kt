@@ -2,6 +2,7 @@ package com.example.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.data.Client
 import com.example.data.DailyLedger
 import com.example.data.DashboardRepository
@@ -137,8 +138,10 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
-    // Default data initializers for testing
+    // Datos semilla solo para desarrollo: en release la bodega empieza vacía
+    // y el operador registra sus propios clientes e inventario.
     fun initTestData() {
+        if (!BuildConfig.DEBUG) return
         viewModelScope.launch {
             if (clients.value.isEmpty()) {
                 repository.insertClient(Client(name = "Client A", contact_info = "123456"))
