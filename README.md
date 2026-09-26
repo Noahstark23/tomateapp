@@ -5,7 +5,8 @@ comprar cajas en CENADA de madrugada, vender por kg/caja en feria o punto fijo, 
 saber la ganancia real del día y cuánto efectivo se puede retirar sin descapitalizar el negocio.
 
 - Package código: `com.example` · `applicationId: com.aistudio.dashboard.nortex`
-- `minSdk 26`, `targetSdk 36`, `compileSdk 36.1`, AGP `9.1.1`, Kotlin `2.2.10`, Room `2.7.0`
+- `minSdk 26`, `targetSdk 36`, `compileSdk 36.1`, AGP `9.1.1`, Kotlin `2.2.10`, Room `2.7.0` (DB **v4** con migración 3→4 sin pérdida, `exportSchema=true`)
+- Tabs: Inicio (CFO) · 💰 Caja (flujo + predicción) · 💳 Créditos (fiado/abonos) · 📈 Reportes
 - Moneda: colones (CRC, `Locale("es","CR")`). Sin decimales en UI, redondeo feria a ₡50.
 - Offline-first local (Room). Sin backend hoy: Retrofit/Moshi/OkHttp están declarados pero no usados.
 - IA Gemini: declarada en `metadata.json` y `.env.example`, pero `firebase-ai` está comentado en
@@ -35,16 +36,19 @@ Detalle completo: `docs/BUILD_RUN.md`.
 2. **Dashboard**: semáforo salud (verde/ámbar/rojo), Capital Extraíble Hoy con desglose
    (caja − reposición − gastos proyectados − fondo 15%), KPIs (ventas, ganancia real, gastos, merma + fuga 7d),
    gráfica apilada 7 días, acciones rápidas.
-3. **Registrar Venta**: cliente + producto + cantidad, valida stock, congela costo, calcula total/ganancia,
-   intenta imprimir ticket ESC/POS por Bluetooth (`PrintService`). Botón "+ Nuevo cliente" y "💬 WhatsApp"
-   con mensaje de pedido pre-llenado.
+3. **Registrar Venta**: contado o **fiado** (switch con cupo visible y bloqueo por sobre-cupo),
+   valida stock, congela costo, calcula total/ganancia, intenta imprimir ticket ESC/POS por Bluetooth.
+   Botón "+ Nuevo cliente" y "💬 WhatsApp" con pedido pre-llenado.
 4. **Registrar Gasto**: categoría TRANSPORTE/SALARIO/EMPAQUE/OTROS + monto + descripción.
 5. **Registrar Merma**: producto + cantidad + motivo, valora pérdida a costo (no toca caja).
 6. **👤 Clientes y Proveedores**: alta con teléfono validado, WhatsApp por fila y mensaje libre a
    proveedor con plantilla de cotización.
-7. **💰 Caja**: entradas vs salidas del día, neto caja vs ganancia real, predicción simple 7 días con
-   alerta de quiebre de caja.
-8. **Reportes**: inventario (stock + valor a costo) y P&L diario últimos 30 días.
+7. **💰 Caja**: entradas (contado + abonos) vs salidas, FIADO HOY separado, neto caja vs ganancia
+   real, predicción 7 días de entradas de efectivo con alerta de quiebre.
+8. **💳 Créditos**: total por cobrar, saldos con antigüedad, abonos (suman caja el día del pago,
+   FIFO, sin sobrepagos), cupo editable, WhatsApp de cobro con saldo.
+9. **Reportes**: inventario (stock + valor a costo, tap para precios/entradas), "+ Producto",
+   **Exportar CSV** del día para el contador, y P&L diario últimos 30 días.
 
 ## Mapa de docs
 

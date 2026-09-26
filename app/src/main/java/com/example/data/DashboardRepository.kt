@@ -34,6 +34,12 @@ class DashboardRepository(private val appDao: AppDao) {
     fun getLedgersBetween(start: String, end: String): Flow<List<DailyLedger>> =
         appDao.getLedgersBetween(start, end)
 
+    fun getCashSalesSeries(start: String, end: String): Flow<List<DateTotal>> =
+        appDao.getCashSalesSeries(start, end)
+
+    fun getCollectionsSeries(start: String, end: String): Flow<List<DateTotal>> =
+        appDao.getCollectionsSeries(start, end)
+
     fun getClients(): Flow<List<Client>> = appDao.getClients()
 
     fun getInventory(): Flow<List<Inventory>> = appDao.getInventory()
@@ -44,9 +50,14 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun setInitialInvestment(date: String, investment: Double) =
         appDao.setInitialInvestment(date, investment)
 
-    /** Registra una venta congelando el costo vigente. Null si no hay stock. */
-    suspend fun registerSale(date: String, clientId: Int, inventoryId: Int, quantity: Int): Invoice? =
-        appDao.processSale(date, clientId, inventoryId, quantity)
+    /** Registra una venta congelando el costo vigente. Null si no hay stock o cupo. */
+    suspend fun registerSale(
+        date: String,
+        clientId: Int,
+        inventoryId: Int,
+        quantity: Int,
+        isCredit: Boolean = false
+    ): Invoice? = appDao.processSale(date, clientId, inventoryId, quantity, isCredit)
 
     /** Registra un gasto operativo (reduce caja y ganancia real). */
     suspend fun registerExpense(
@@ -70,10 +81,57 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun insertClient(client: Client): Long = appDao.insertClient(client)
 
     /** Da de alta un cliente y lo devuelve con su id para seleccionarlo de una vez. */
-    suspend fun addClient(name: String, phone: String): Client {
-        val id = appDao.insertClient(Client(name = name, contact_info = phone))
-        return Client(id = id.toInt(), name = name, contact_info = phone)
+    suspend fun addClient(name: String, phone: String, creditLimit: Double = 0.0): Client {
+        val id = appDao.insertClient(
+            Client(name = name, contact_info = phone, phone = phone, credit_limit = creditLimit)
+        )
+        return Client(id = id.toInt(), name = name, contact_info = phone, phone = phone, credit_limit = creditLimit)
+    }
+
+    suspend fun updateClient(client: Client) = appDao.updateClient(client)
+
+    suspend fun setCreditLimit(clientId: Int, limit: Double) {
+        val client = appDao.getClientByIdSync(clientId) ?: return
+        appDao.updateClient(client.copy(credit_limit = limit))
     }
 
     suspend fun insertInventory(inventory: Inventory) = appDao.insertInventory(inventory)
+
+    /** Alta de producto con stock inicial. */
+    suspend fun addProduct(name: String, costPrice: Double, salePrice: Double, stock: Int) =
+        appDao.insertInventory(
+            Inventory(
+                item_name = name,
+                purchase_price = costPrice,
+                sale_price = salePrice,
+                initial_stock = stock,
+                current_stock = stock
+            )
+        )
+
+    /** Ajusta precios de venta/costo vigentes (no reescribe historia). */
+    suspend fun updatePrices(inventoryId: Int, salePrice: Double, costPrice: Double) =
+        appDao.updatePrices(inventoryId, salePrice, costPrice)
+
+    /** Entrada de mercadería: suma stock inicial y actual. */
+    suspend fun addStock(inventoryId: Int, quantity: Int) = appDao.addStock(inventoryId, quantity)
+
+    // --- Créditos y cobranza -------------------------------------------------
+
+    fun getCreditBalances(): Flow<List<ClientBalance>> = appDao.getCreditBalances()
+
+    fun getOpenCreditInvoices(clientId: Int): Flow<List<Invoice>> =
+        appDao.getOpenCreditInvoices(clientId)
+
+    suspend fun getClientBalance(clientId: Int): Double = appDao.getClientBalanceSync(clientId)
+
+    /** Abono que suma caja el día del pago. Null si monto inválido o sobrepago. */
+    suspend fun registerPayment(
+        date: String,
+        clientId: Int,
+        invoiceId: Int?,
+        amount: Double
+    ): Payment? = appDao.processPayment(date, clientId, invoiceId, amount)
+
+    fun getPaymentsForDate(date: String): Flow<List<Payment>> = appDao.getPaymentsForDate(date)
 }

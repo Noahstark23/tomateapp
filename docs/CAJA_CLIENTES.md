@@ -1,4 +1,10 @@
-# Caja, Clientes y WhatsApp (v0.2.0) + Créditos Fase 2
+# Caja, Clientes y Créditos (v0.2.0 → v0.3.0)
+
+## v0.3.0: Créditos implementados (diseño Fase 2 hecho realidad)
+- Migración 3→4 manual sin pérdida + `exportSchema=true` (adiós destructive).
+- Venta fiada con cupo, tab Créditos con abonos/antigüedad/WhatsApp, Caja con
+  neto = contado + abonos − gastos y proyección sobre entradas de efectivo.
+- Detalle contable y QA E2E en `CHANGELOG.md` (v0.3.0).
 
 ## Lo que trae v0.2.0 (verificado en emulator-5580)
 - **Tab 💰 Caja** (`ui/CashFlowScreen.kt`, ruta `cash`): saldo inicial vs actual y neto

@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import com.example.data.AppDatabase
 import com.example.data.DashboardRepository
 import com.example.ui.CashFlowScreen
+import com.example.ui.CreditsScreen
 import com.example.ui.DashboardScreen
 import com.example.ui.ReportsScreen
 import com.example.ui.DashboardViewModel
@@ -71,6 +72,18 @@ class MainActivity : ComponentActivity() {
                 }
               )
               NavigationBarItem(
+                icon = { Text("💳") },
+                label = { Text("Créditos") },
+                selected = currentRoute == "credits",
+                onClick = {
+                  navController.navigate("credits") {
+                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
+                }
+              )
+              NavigationBarItem(
                 icon = { Text("📈") },
                 label = { Text("Reportes") },
                 selected = currentRoute == "reports",
@@ -88,6 +101,7 @@ class MainActivity : ComponentActivity() {
           NavHost(navController, startDestination = "dashboard", modifier = Modifier.padding(padding)) {
             composable("dashboard") { DashboardScreen(viewModel = viewModel, financialViewModel = financialViewModel) }
             composable("cash") { CashFlowScreen(financialViewModel = financialViewModel) }
+            composable("credits") { CreditsScreen(viewModel = viewModel) }
             composable("reports") { ReportsScreen(viewModel = viewModel) }
           }
         }

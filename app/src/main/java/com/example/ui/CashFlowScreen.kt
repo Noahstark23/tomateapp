@@ -130,16 +130,33 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel) {
                 )
             }
 
-            // Entradas: ventas del día por producto.
+            // Entradas: ventas al contado del día por producto + abonos.
             item {
+                val entryRows = state.salesByProduct
+                    .filter { it.total > 0 }
+                    .map { "${it.itemName} × ${it.quantity}" to format.format(it.total) }
+                    .toMutableList()
+                if (state.collectionsToday > 0) {
+                    entryRows.add("Abonos cobrados" to format.format(state.collectionsToday))
+                }
                 CashCard(
-                    title = "ENTRADAS · ${format.format(state.totalSales)}",
+                    title = "ENTRADAS · ${format.format(state.cashSalesToday + state.collectionsToday)}",
                     subtitle = "${state.invoiceCount} ventas · ticket prom. ${format.format(state.avgTicket)}",
-                    rows = state.salesByProduct.map {
-                        "${it.itemName} × ${it.quantity}" to format.format(it.total)
-                    },
-                    emptyText = "Sin ventas registradas hoy."
+                    rows = entryRows,
+                    emptyText = "Sin entradas de efectivo hoy."
                 )
+            }
+
+            // Fiado del día: reconocido como ingreso pero no es caja todavía.
+            if (state.creditSalesToday > 0) {
+                item {
+                    CashCard(
+                        title = "FIADO HOY · ${format.format(state.creditSalesToday)}",
+                        subtitle = "Por cobrar: suma a ganancia, no a caja",
+                        rows = emptyList(),
+                        emptyText = null
+                    )
+                }
             }
 
             // Salidas: gastos del día por categoría.
@@ -164,13 +181,13 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel) {
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            "Neto caja ${format.format(state.netCashToday)} = ventas − gastos (efectivo).",
+                            "Neto caja ${format.format(state.netCashToday)} = contado + abonos − gastos (efectivo).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Ganancia real ${format.format(state.realNetProfit)} = ventas − costo − gastos − merma (la merma y el costo no salen de caja hoy).",
+                            "Ganancia real ${format.format(state.realNetProfit)} = ventas (contado + fiado) − costo − gastos − merma (el fiado, la merma y el costo no son caja hoy).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -193,7 +210,7 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel) {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            "Ritmo: ventas prom. ${format.format(state.avgDailySales)}/día − gastos ${format.format(state.projectedDailyExpenses)}/día. Basado en ${state.daysWithData} de 7 días con registro.",
+                            "Ritmo: entradas prom. ${format.format(state.avgDailySales)}/día − gastos ${format.format(state.projectedDailyExpenses)}/día. Basado en ${state.daysWithData} de 7 días con registro.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

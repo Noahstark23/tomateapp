@@ -13,6 +13,7 @@ import com.example.data.Waste
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -107,11 +108,11 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
-    fun processSale(client: Client, inventoryItem: Inventory, quantity: Int) {
+    fun processSale(client: Client, inventoryItem: Inventory, quantity: Int, isCredit: Boolean = false) {
         if (quantity > inventoryItem.current_stock || quantity <= 0) return
 
         viewModelScope.launch {
-            val invoice = repository.registerSale(currentDate, client.id, inventoryItem.id, quantity)
+            val invoice = repository.registerSale(currentDate, client.id, inventoryItem.id, quantity, isCredit)
             if (invoice != null) {
                 lastSaleDetails.value = LastSaleDetails(
                     clientName = client.name,
@@ -139,13 +140,122 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
     }
 
     /**
-     * Da de alta un cliente (nombre + teléfono ya sanitizado) y lo devuelve
-     * con su id para poder seleccionarlo inmediatamente. Callback con el
-     * resultado porque Room genera el id al insertar.
+     * Da de alta un cliente (nombre + teléfono ya sanitizado + cupo) y lo
+     * devuelve con su id para poder seleccionarlo inmediatamente.
      */
-    fun addClient(name: String, phone: String, onAdded: (Client) -> Unit = {}) {
+    fun addClient(name: String, phone: String, creditLimit: Double = 0.0, onAdded: (Client) -> Unit = {}) {
         viewModelScope.launch {
-            onAdded(repository.addClient(name, phone))
+            onAdded(repository.addClient(name, phone, creditLimit))
+        }
+    }
+
+    fun setCreditLimit(clientId: Int, limit: Double) {
+        viewModelScope.launch { repository.setCreditLimit(clientId, limit) }
+    }
+
+    // --- Créditos y cobranza --------------------------------------------------
+
+    /** Saldo vivo por cobrar por cliente (derivado de facturas a crédito). */
+    val creditBalances: StateFlow<Map<Int, Double>> = repository.getCreditBalances()
+        .map { list -> list.associate { it.clientId to it.balance } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
+    fun openCreditInvoices(clientId: Int): StateFlow<List<com.example.data.Invoice>> =
+        repository.getOpenCreditInvoices(clientId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /**
+     * Registra un abono (suma caja hoy). [onDone] recibe true si se guardó;
+     * false = monto inválido o sobrepago.
+     */
+    fun registerPayment(clientId: Int, invoiceId: Int?, amount: Double, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            onDone(repository.registerPayment(currentDate, clientId, invoiceId, amount) != null)
+        }
+    }
+
+    // --- Productos -------------------------------------------------------------
+
+    fun addProduct(name: String, costPrice: Double, salePrice: Double, stock: Int) {
+        if (name.isBlank() || costPrice < 0 || salePrice <= 0 || stock < 0) return
+        viewModelScope.launch {
+            repository.addProduct(name.trim(), costPrice, salePrice, stock)
+        }
+    }
+
+    fun updatePrices(inventoryId: Int, salePrice: Double, costPrice: Double) {
+        if (salePrice <= 0 || costPrice < 0) return
+        viewModelScope.launch { repository.updatePrices(inventoryId, salePrice, costPrice) }
+    }
+
+    fun addStock(inventoryId: Int, quantity: Int) {
+        if (quantity <= 0) return
+        viewModelScope.launch { repository.addStock(inventoryId, quantity) }
+    }
+
+    // --- Exportar CSV para el contador (FE v4.4) --------------------------------
+
+    /**
+     * Genera el CSV del día (ventas, gastos, abonos) con columna CABYS vacía
+     * para que el contador lo mapee a su facturador. Devuelve el Uri o null.
+     */
+    suspend fun exportDayCsv(context: android.content.Context): android.net.Uri? {
+        return try {
+            val invoices = repository.getInvoicesForDate(currentDate).first()
+            val expenses = repository.getExpensesForDate(currentDate).first()
+            val payments = repository.getPaymentsForDate(currentDate).first()
+            val clients = repository.getClients().first().associateBy { it.id }
+            val items = repository.getInventory().first().associateBy { it.id }
+            val sb = StringBuilder()
+            sb.append("tipo,fecha,documento,cliente,producto,cantidad,precio_unit,total,es_credito,cobrado,categoria,monto,descripcion,cabys\n")
+            fun esc(v: String) = "\"" + v.replace("\"", "\"\"") + "\""
+            invoices.forEach { inv ->
+                sb.append(
+                    listOf(
+                        "VENTA", inv.ledger_date, inv.id.toString(),
+                        esc(clients[inv.client_id]?.name ?: ""),
+                        esc(items[inv.inventory_id]?.item_name ?: ""),
+                        inv.quantity.toString(), inv.unit_price.toString(),
+                        inv.total_amount.toString(),
+                        if (inv.is_credit) "SI" else "NO", inv.paid_amount.toString(),
+                        "", "", "", ""
+                    ).joinToString(",")
+                ).append("\n")
+            }
+            expenses.forEach { exp ->
+                sb.append(
+                    listOf(
+                        "GASTO", exp.ledger_date, exp.id.toString(), "", "", "", "", "",
+                        "", "", exp.category.name, exp.amount.toString(),
+                        esc(exp.description), ""
+                    ).joinToString(",")
+                ).append("\n")
+            }
+            payments.forEach { pay ->
+                sb.append(
+                    listOf(
+                        "ABONO", pay.ledger_date, pay.id.toString(),
+                        esc(clients[pay.client_id]?.name ?: ""), "", "", "",
+                        pay.amount.toString(), "", pay.amount.toString(), "", "", "", ""
+                    ).joinToString(",")
+                ).append("\n")
+            }
+            val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+            val file = java.io.File(dir, "tomateapp_$currentDate.csv")
+            file.writeText(sb.toString(), Charsets.UTF_8)
+            androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+        } catch (e: Exception) {
+            null
         }
     }
 

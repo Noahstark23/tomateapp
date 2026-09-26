@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,31 +16,52 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.Inventory
 import com.example.ui.theme.CustomOnSuccessVariant
 import com.example.ui.theme.CustomSuccessContainer
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.launch
+import android.content.Intent
+import android.widget.Toast
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(viewModel: DashboardViewModel) {
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val ledgers by viewModel.historicalLedgers.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var showAddProduct by remember { mutableStateOf(false) }
+    var editingItem by remember { mutableStateOf<Inventory?>(null) }
 
     val format = NumberFormat.getCurrencyInstance(Locale("es", "CR"))
 
@@ -110,6 +132,7 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clickable { editingItem = item }
                                     .padding(vertical = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -159,6 +182,34 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showAddProduct = true },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("+ Producto") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val uri = viewModel.exportDayCsv(context)
+                                if (uri == null) {
+                                    Toast.makeText(context, "No se pudo generar el CSV", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val share = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/csv"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(share, "Enviar CSV del día"))
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Exportar CSV") }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
@@ -253,4 +304,135 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
+
+    if (showAddProduct) {
+        AddProductDialog(
+            onConfirm = { name, cost, sale, stock ->
+                viewModel.addProduct(name, cost, sale, stock)
+                showAddProduct = false
+            },
+            onDismiss = { showAddProduct = false }
+        )
+    }
+
+    editingItem?.let { item ->
+        EditProductDialog(
+            item = item,
+            onConfirm = { sale, cost, entry ->
+                viewModel.updatePrices(item.id, sale, cost)
+                if (entry > 0) viewModel.addStock(item.id, entry)
+                editingItem = null
+            },
+            onDismiss = { editingItem = null }
+        )
+    }
+}
+
+/** Alta de producto con precios y stock inicial. */
+@Composable
+private fun AddProductDialog(
+    onConfirm: (String, Double, Double, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var costStr by remember { mutableStateOf("") }
+    var saleStr by remember { mutableStateOf("") }
+    var stockStr by remember { mutableStateOf("") }
+
+    val cost = costStr.toDoubleOrNull()
+    val sale = saleStr.toDoubleOrNull()
+    val stock = stockStr.toIntOrNull()
+    val canConfirm = name.trim().isNotEmpty() && cost != null && cost >= 0 &&
+        sale != null && sale > 0 && stock != null && stock >= 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nuevo Producto", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                ProductNumberField("Nombre (ej. Caja Tomate Cherry)", name, { name = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Costo por unidad (CRC)", costStr, { costStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Precio venta (CRC)", saleStr, { saleStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Stock inicial", stockStr, { stockStr = it }, KeyboardType.Number)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name.trim(), cost!!, sale!!, stock!!) },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+/** Edita precios vigentes y registra entrada de mercadería. */
+@Composable
+private fun EditProductDialog(
+    item: Inventory,
+    onConfirm: (Double, Double, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var saleStr by remember { mutableStateOf(item.sale_price.toString()) }
+    var costStr by remember { mutableStateOf(item.purchase_price.toString()) }
+    var entryStr by remember { mutableStateOf("") }
+
+    val sale = saleStr.toDoubleOrNull()
+    val cost = costStr.toDoubleOrNull()
+    val entry = entryStr.toIntOrNull() ?: 0
+    val canConfirm = sale != null && sale > 0 && cost != null && cost >= 0 && entry >= 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(item.item_name, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(
+                    "Stock actual: ${item.current_stock}. Los cambios no alteran ventas pasadas.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                ProductNumberField("Precio venta (CRC)", saleStr, { saleStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Costo por unidad (CRC)", costStr, { costStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Entrada de mercadería (+stock)", entryStr, { entryStr = it }, KeyboardType.Number)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(sale!!, cost!!, entry) },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+@Composable
+private fun ProductNumberField(
+    label: String,
+    value: String,
+    onChange: (String) -> Unit,
+    keyboard: KeyboardType
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        singleLine = true
+    )
 }

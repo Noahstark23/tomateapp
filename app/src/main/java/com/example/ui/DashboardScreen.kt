@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -97,6 +98,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
     val cfoState by financialViewModel.cfoState.collectAsStateWithLifecycle()
     val clients by viewModel.clients.collectAsStateWithLifecycle()
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
+    val creditBalances by viewModel.creditBalances.collectAsStateWithLifecycle()
 
     var activeDialog by remember { mutableStateOf<QuickAction?>(null) }
 
@@ -169,8 +171,9 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             clients = clients,
             inventory = inventory,
             format = format,
-            onConfirm = { client, item, qty -> viewModel.processSale(client, item, qty) },
-            onAddClient = { name, phone, onAdded -> viewModel.addClient(name, phone, onAdded) },
+            creditBalances = creditBalances,
+            onConfirm = { client, item, qty, isCredit -> viewModel.processSale(client, item, qty, isCredit) },
+            onAddClient = { name, phone, limit, onAdded -> viewModel.addClient(name, phone, limit, onAdded) },
             onDismiss = { activeDialog = null }
         )
         QuickAction.EXPENSE -> ExpenseDialog(
@@ -192,7 +195,8 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
         )
         QuickAction.CLIENTS -> ClientsDialog(
             clients = clients,
-            onAddClient = { name, phone, onAdded -> viewModel.addClient(name, phone, onAdded) },
+            onAddClient = { name, phone, limit, onAdded -> viewModel.addClient(name, phone, limit, onAdded) },
+            onSetLimit = { id, limit -> viewModel.setCreditLimit(id, limit) },
             onDismiss = { activeDialog = null }
         )
         null -> Unit
@@ -718,8 +722,9 @@ private fun SaleDialog(
     clients: List<Client>,
     inventory: List<Inventory>,
     format: NumberFormat,
-    onConfirm: (Client, Inventory, Int) -> Unit,
-    onAddClient: (String, String, (Client) -> Unit) -> Unit,
+    creditBalances: Map<Int, Double>,
+    onConfirm: (Client, Inventory, Int, Boolean) -> Unit,
+    onAddClient: (String, String, Double, (Client) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -739,6 +744,7 @@ private fun SaleDialog(
     var clientExpanded by remember { mutableStateOf(false) }
     var inventoryExpanded by remember { mutableStateOf(false) }
     var showAddClient by remember { mutableStateOf(false) }
+    var isCredit by remember { mutableStateOf(false) }
 
     // Si la lista de clientes crece (alta nueva), selecciona al recién creado.
     LaunchedEffect(clients.size) {
@@ -749,7 +755,16 @@ private fun SaleDialog(
 
     val quantity = quantityStr.toIntOrNull() ?: 0
     val stockError = selectedInventory != null && quantity > (selectedInventory?.current_stock ?: 0)
-    val canConfirm = quantity > 0 && !stockError && selectedClient != null && selectedInventory != null
+    // Fiado: exige cupo y bloquea si saldo + total excede el límite.
+    val saleTotal = quantity * (selectedInventory?.sale_price ?: 0.0)
+    val clientBalance = selectedClient?.let { creditBalances[it.id] ?: 0.0 } ?: 0.0
+    val creditBlocked = isCredit && selectedClient != null &&
+        (selectedClient?.credit_limit ?: 0.0) <= 0.0
+    val overLimit = isCredit && selectedClient != null &&
+        (selectedClient?.credit_limit ?: 0.0) > 0.0 &&
+        clientBalance + saleTotal > (selectedClient?.credit_limit ?: 0.0) + 0.005
+    val canConfirm = quantity > 0 && !stockError && !creditBlocked && !overLimit &&
+        selectedClient != null && selectedInventory != null
     val clientPhoneValid = selectedClient?.let { PhoneUtils.isValidCrPhone(it.contact_info) } == true
 
     AlertDialog(
@@ -816,11 +831,43 @@ private fun SaleDialog(
 
                 if (showAddClient) {
                     AddClientDialog(
-                        onConfirm = { name, phone ->
-                            onAddClient(name, phone) { added -> selectedClient = added }
+                        onConfirm = { name, phone, limit ->
+                            onAddClient(name, phone, limit) { added -> selectedClient = added }
                             showAddClient = false
                         },
                         onDismiss = { showAddClient = false }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (isCredit) "Fiado (a crédito)" else "Contado (efectivo)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Switch(
+                        checked = isCredit,
+                        onCheckedChange = { isCredit = it }
+                    )
+                }
+                if (isCredit && selectedClient != null) {
+                    val cupo = (selectedClient?.credit_limit ?: 0.0) - clientBalance
+                    Text(
+                        when {
+                            creditBlocked -> "Sin cupo: este cliente no tiene crédito asignado."
+                            overLimit -> "Excede el cupo disponible (${format.format(cupo)})."
+                            else -> "Cupo disponible: ${format.format(cupo)}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (creditBlocked || overLimit) MaterialTheme.colorScheme.error
+                        else CustomOnSuccessVariant
                     )
                 }
 
@@ -889,7 +936,7 @@ private fun SaleDialog(
                 onClick = {
                     val client = selectedClient ?: return@Button
                     val item = selectedInventory ?: return@Button
-                    onConfirm(client, item, quantity)
+                    onConfirm(client, item, quantity, isCredit)
 
                     val clientName = client.name
                     val itemName = item.item_name
@@ -923,7 +970,7 @@ private fun SaleDialog(
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Vender e Imprimir")
+                Text(if (isCredit) "Vender fiado" else "Vender e Imprimir")
             }
         },
         dismissButton = {
@@ -1211,15 +1258,17 @@ private fun AdjustInvestmentDialog(
  */
 @Composable
 fun AddClientDialog(
-    onConfirm: (String, String) -> Unit,
+    onConfirm: (String, String, Double) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
+    var limitStr by remember { mutableStateOf("") }
 
     val cleanName = name.trim()
     val phoneOk = PhoneUtils.isValidCrPhone(phone)
-    val canConfirm = cleanName.isNotEmpty() && cleanName.length <= 60 && phoneOk
+    val limit = limitStr.toDoubleOrNull() ?: 0.0
+    val canConfirm = cleanName.isNotEmpty() && cleanName.length <= 60 && phoneOk && limit >= 0
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1248,12 +1297,22 @@ fun AddClientDialog(
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = limitStr,
+                    onValueChange = { limitStr = it },
+                    label = { Text("Cupo crédito CRC (vacío = sin crédito)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    onConfirm(cleanName, PhoneUtils.sanitize(phone))
+                    onConfirm(cleanName, PhoneUtils.sanitize(phone), limit)
                 },
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
@@ -1274,11 +1333,13 @@ fun AddClientDialog(
 @Composable
 private fun ClientsDialog(
     clients: List<Client>,
-    onAddClient: (String, String, (Client) -> Unit) -> Unit,
+    onAddClient: (String, String, Double, (Client) -> Unit) -> Unit,
+    onSetLimit: (Int, Double) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     var showAddClient by remember { mutableStateOf(false) }
+    var limitClient by remember { mutableStateOf<Client?>(null) }
     var supplierPhone by remember { mutableStateOf("") }
     var supplierMessage by remember {
         mutableStateOf(
@@ -1302,10 +1363,15 @@ private fun ClientsDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(client.name, fontWeight = FontWeight.Medium)
                             Text(
-                                client.contact_info.ifEmpty { "Sin teléfono" },
+                                "${client.contact_info.ifEmpty { "Sin teléfono" }} · Cupo ${
+                                    NumberFormat.getCurrencyInstance(Locale("es", "CR")).format(client.credit_limit)
+                                }",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                        TextButton(onClick = { limitClient = client }) {
+                            Text("Cupo")
                         }
                         TextButton(
                             onClick = {
@@ -1371,8 +1437,20 @@ private fun ClientsDialog(
 
     if (showAddClient) {
         AddClientDialog(
-            onConfirm = { name, phone -> onAddClient(name, phone) {} },
+            onConfirm = { name, phone, limit -> onAddClient(name, phone, limit) {} },
             onDismiss = { showAddClient = false }
+        )
+    }
+
+    limitClient?.let { lc ->
+        LimitDialog(
+            clientName = lc.name,
+            currentLimit = lc.credit_limit,
+            onConfirm = { limit ->
+                onSetLimit(lc.id, limit)
+                limitClient = null
+            },
+            onDismiss = { limitClient = null }
         )
     }
 }

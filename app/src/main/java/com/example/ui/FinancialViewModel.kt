@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.CategoryTotal
 import com.example.data.DailyLedger
 import com.example.data.DashboardRepository
+import com.example.data.DateTotal
 import com.example.data.Invoice
+import com.example.data.Payment
 import com.example.data.SalesByProduct
 import com.example.finance.FinancialEngine
 import com.example.finance.RunwayResult
@@ -55,8 +57,12 @@ data class CashFlowUiState(
     val hasLedger: Boolean = false,
     val initialCash: Double = 0.0,
     val currentCash: Double = 0.0,
+    /** Efectivo que entró menos el que salió: contado + abonos − gastos. */
     val netCashToday: Double = 0.0,
     val totalSales: Double = 0.0,
+    val cashSalesToday: Double = 0.0,
+    val creditSalesToday: Double = 0.0,
+    val collectionsToday: Double = 0.0,
     val totalExpenses: Double = 0.0,
     val realNetProfit: Double = 0.0,
     val salesByProduct: List<SalesByProduct> = emptyList(),
@@ -76,7 +82,7 @@ data class CashFlowUiState(
  * recientes y deriva extracción segura, runway de quiebra y leakage usando
  * FinancialEngine (lógica pura, testeada en FinancialEngineTest).
  */
-class FinancialViewModel(repository: DashboardRepository) : ViewModel() {
+class FinancialViewModel(private val repository: DashboardRepository) : ViewModel() {
 
     private val currentDate = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
 
@@ -92,14 +98,39 @@ class FinancialViewModel(repository: DashboardRepository) : ViewModel() {
      * Flujo de caja del día + proyección 7 días. Combina el ledger de hoy con
      * la ventana reciente y los desgloses por producto/categoría.
      */
-    val cashFlowState: StateFlow<CashFlowUiState> = combine(
+    private data class CashBase(
+        val today: DailyLedger?,
+        val recent: List<DailyLedger>,
+        val byProduct: List<SalesByProduct>,
+        val byCategory: List<CategoryTotal>,
+        val invoices: List<Invoice>
+    )
+
+    private fun cashBase(): kotlinx.coroutines.flow.Flow<CashBase> = combine(
         repository.getLedgerForDate(currentDate),
         repository.getRecentLedgers(ANALYSIS_WINDOW_DAYS),
         repository.getSalesByProduct(currentDate),
         repository.getExpenseTotalsByCategory(currentDate),
         repository.getInvoicesForDate(currentDate)
     ) { today, recent, byProduct, byCategory, invoices ->
-        buildCashState(today, recent, byProduct, byCategory, invoices)
+        CashBase(today, recent, byProduct, byCategory, invoices)
+    }
+
+    private fun weekRange(): Pair<String, String> = Pair(
+        LocalDate.now().minusDays(6).format(DateTimeFormatter.ISO_LOCAL_DATE),
+        currentDate
+    )
+
+    val cashFlowState: StateFlow<CashFlowUiState> = combine(
+        cashBase(),
+        repository.getPaymentsForDate(currentDate),
+        repository.getCashSalesSeries(weekRange().first, weekRange().second),
+        repository.getCollectionsSeries(weekRange().first, weekRange().second)
+    ) { base, payments, cashSeries, collectionsSeries ->
+        buildCashState(
+            base.today, base.recent, base.byProduct, base.byCategory,
+            base.invoices, payments, cashSeries, collectionsSeries
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -111,24 +142,30 @@ class FinancialViewModel(repository: DashboardRepository) : ViewModel() {
         recentLedgers: List<DailyLedger>,
         byProduct: List<SalesByProduct>,
         byCategory: List<CategoryTotal>,
-        invoices: List<Invoice>
+        invoices: List<Invoice>,
+        payments: List<Payment>,
+        cashSeries: List<DateTotal>,
+        collectionsSeries: List<DateTotal>
     ): CashFlowUiState {
         if (today == null) return CashFlowUiState(hasLedger = false)
 
-        // Promedio móvil de ventas: divisor 7 calendario (días sin ledger = 0)
-        // para no inflar el promedio cuando hay días sin registro.
-        val salesByDate = recentLedgers.associate { it.date to it.total_sales }
+        // Promedio móvil de ENTRADAS DE CAJA (contado + abonos): divisor 7
+        // calendario (días sin movimiento = 0) para no inflar el promedio.
+        // El fiado no entra aquí: no es caja hasta que se cobra.
+        val cashByDate = cashSeries.associate { it.date to it.total }.toMutableMap()
+        collectionsSeries.forEach { (date, total) ->
+            cashByDate[date] = (cashByDate[date] ?: 0.0) + total
+        }
+        val ledgerDates = recentLedgers.map { it.date }.toSet()
         var daysWithData = 0
-        var salesSum = 0.0
+        var cashInSum = 0.0
         for (i in 0 until ANALYSIS_WINDOW_DAYS) {
             val day = LocalDate.now().minusDays(i.toLong()).format(DateTimeFormatter.ISO_LOCAL_DATE)
-            val sales = salesByDate[day]
-            if (sales != null) {
-                daysWithData++
-                salesSum += sales
-            }
+            val cashIn = cashByDate[day] ?: 0.0
+            cashInSum += cashIn
+            if (day in ledgerDates || cashIn > 0) daysWithData++
         }
-        val avgDailySales = salesSum / ANALYSIS_WINDOW_DAYS
+        val avgDailyCashIn = cashInSum / ANALYSIS_WINDOW_DAYS
 
         val projectedExpenses = FinancialEngine.projectDailyExpenses(
             recentDailyExpenses = recentLedgers.map { it.total_expenses },
@@ -136,7 +173,7 @@ class FinancialViewModel(repository: DashboardRepository) : ViewModel() {
         )
         val projected = FinancialEngine.projectCash7Days(
             currentCash = today.cash_on_hand,
-            avgDailySales = avgDailySales,
+            avgDailySales = avgDailyCashIn,
             projectedDailyExpenses = projectedExpenses
         )
         val projection = projected.mapIndexed { index, cash ->
@@ -154,20 +191,28 @@ class FinancialViewModel(repository: DashboardRepository) : ViewModel() {
             recentDailyOutflows = recentLedgers.map { it.total_expenses + it.total_waste_value }
         )
 
+        // Neto caja = efectivo real: contado + abonos − gastos. El fiado NO
+        // toca caja hasta que se cobra (invariante DATA_MODEL).
+        val cashSales = invoices.filter { !it.is_credit }.sumOf { it.total_amount }
+        val creditSales = invoices.filter { it.is_credit }.sumOf { it.total_amount }
+        val collections = payments.sumOf { it.amount }
+
         return CashFlowUiState(
             hasLedger = true,
             initialCash = today.initial_investment,
             currentCash = today.cash_on_hand,
-            // Invariante: neto caja = ventas - gastos (la merma y el COGS no tocan caja).
-            netCashToday = today.total_sales - today.total_expenses,
+            netCashToday = cashSales + collections - today.total_expenses,
             totalSales = today.total_sales,
+            cashSalesToday = cashSales,
+            creditSalesToday = creditSales,
+            collectionsToday = collections,
             totalExpenses = today.total_expenses,
             realNetProfit = today.real_net_profit,
             salesByProduct = byProduct,
             expensesByCategory = byCategory.filter { it.total > 0.0 },
             invoiceCount = invoices.size,
             avgTicket = if (invoices.isNotEmpty()) invoices.sumOf { it.total_amount } / invoices.size else 0.0,
-            avgDailySales = avgDailySales,
+            avgDailySales = avgDailyCashIn,
             projectedDailyExpenses = projectedExpenses,
             projection = projection,
             breakEvenDay = FinancialEngine.findBreakEvenDay(projected),
