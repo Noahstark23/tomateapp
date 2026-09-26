@@ -197,6 +197,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             clients = clients,
             onAddClient = { name, phone, limit, onAdded -> viewModel.addClient(name, phone, limit, onAdded) },
             onSetLimit = { id, limit -> viewModel.setCreditLimit(id, limit) },
+            onUpdateFe = { id, type, number, email -> viewModel.updateClientFe(id, type, number, email) },
             onDismiss = { activeDialog = null }
         )
         null -> Unit
@@ -1335,11 +1336,13 @@ private fun ClientsDialog(
     clients: List<Client>,
     onAddClient: (String, String, Double, (Client) -> Unit) -> Unit,
     onSetLimit: (Int, Double) -> Unit,
+    onUpdateFe: (Int, String, String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     var showAddClient by remember { mutableStateOf(false) }
     var limitClient by remember { mutableStateOf<Client?>(null) }
+    var feClient by remember { mutableStateOf<Client?>(null) }
     var supplierPhone by remember { mutableStateOf("") }
     var supplierMessage by remember {
         mutableStateOf(
@@ -1372,6 +1375,9 @@ private fun ClientsDialog(
                         }
                         TextButton(onClick = { limitClient = client }) {
                             Text("Cupo")
+                        }
+                        TextButton(onClick = { feClient = client }) {
+                            Text("🧾")
                         }
                         TextButton(
                             onClick = {
@@ -1453,4 +1459,105 @@ private fun ClientsDialog(
             onDismiss = { limitClient = null }
         )
     }
+
+    feClient?.let { fc ->
+        ClientFeDialog(
+            client = fc,
+            onConfirm = { type, number, email ->
+                onUpdateFe(fc.id, type, number, email)
+                feClient = null
+            },
+            onDismiss = { feClient = null }
+        )
+    }
+}
+
+/**
+ * Datos FE del receptor: tipo/número de cédula + email. Sin cédula la factura
+ * solo puede emitirse como XML pre-firma sin receptor.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClientFeDialog(
+    client: Client,
+    onConfirm: (String, String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var idType by remember { mutableStateOf(client.id_type.ifEmpty { "01" }) }
+    var idNumber by remember { mutableStateOf(client.id_number) }
+    var email by remember { mutableStateOf(client.email) }
+    var typeExpanded by remember { mutableStateOf(false) }
+
+    val types = listOf("01" to "Física", "02" to "Jurídica", "03" to "DIMEX", "04" to "NITE")
+    val cleanNumber = idNumber.filter { it.isDigit() }
+    val canConfirm = cleanNumber.length in 9..12 &&
+        (email.isBlank() || email.contains("@"))
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Datos FE · ${client.name}", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                ExposedDropdownMenuBox(
+                    expanded = typeExpanded,
+                    onExpandedChange = { typeExpanded = !typeExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = types.firstOrNull { it.first == idType }?.let { "${it.first} ${it.second}" }
+                            ?: idType,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Tipo cédula") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = typeExpanded,
+                        onDismissRequest = { typeExpanded = false }
+                    ) {
+                        types.forEach { (code, label) ->
+                            DropdownMenuItem(
+                                text = { Text("$code $label") },
+                                onClick = {
+                                    idType = code
+                                    typeExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = idNumber,
+                    onValueChange = { idNumber = it },
+                    label = { Text("N.º cédula (9-12 dígitos)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email receptor (opcional)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(idType, cleanNumber, email.trim()) },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }

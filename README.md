@@ -6,7 +6,8 @@ saber la ganancia real del día y cuánto efectivo se puede retirar sin descapit
 
 - Package código: `com.example` · `applicationId: com.aistudio.dashboard.nortex`
 - `minSdk 26`, `targetSdk 36`, `compileSdk 36.1`, AGP `9.1.1`, Kotlin `2.2.10`, Room `2.7.0` (DB **v4** con migración 3→4 sin pérdida, `exportSchema=true`)
-- Tabs: Inicio (CFO) · 💰 Caja (flujo + predicción) · 💳 Créditos (fiado/abonos) · 📈 Reportes
+- Tabs: Inicio (CFO) · 💰 Caja (flujo + predicción) · 💳 Créditos (fiado/abonos) · 📈 Reportes (lotes + FE)
+- Lotes FEFO con vencimiento; FE v4.4 pre-firma (falta certificado .p12 y ATV para validez)
 - Moneda: colones (CRC, `Locale("es","CR")`). Sin decimales en UI, redondeo feria a ₡50.
 - Offline-first local (Room). Sin backend hoy: Retrofit/Moshi/OkHttp están declarados pero no usados.
 - IA Gemini: declarada en `metadata.json` y `.env.example`, pero `firebase-ai` está comentado en
@@ -47,8 +48,9 @@ Detalle completo: `docs/BUILD_RUN.md`.
    real, predicción 7 días de entradas de efectivo con alerta de quiebre.
 8. **💳 Créditos**: total por cobrar, saldos con antigüedad, abonos (suman caja el día del pago,
    FIFO, sin sobrepagos), cupo editable, WhatsApp de cobro con saldo.
-9. **Reportes**: inventario (stock + valor a costo, tap para precios/entradas), "+ Producto",
-   **Exportar CSV** del día para el contador, y P&L diario últimos 30 días.
+9. **Reportes**: inventario (stock + valor a costo, tap para precios/CABYS/entradas, 📦 Lotes FEFO),
+   "+ Producto", **Exportar CSV**, **Facturas electrónicas pre-firma** (XML v4.4 + selector IVA),
+   y P&L diario últimos 30 días.
 
 ## Mapa de docs
 
@@ -62,7 +64,8 @@ Detalle completo: `docs/BUILD_RUN.md`.
 | `docs/BUILD_RUN.md` | Compilar/correr en Mac sin Android Studio |
 | `docs/TESTING_QA.md` | Tests + checklist para declarar done hoy |
 | `docs/USER_GUIDE_OPERADOR.md` | Hoja 1-página para el bodeguero |
-| `docs/CAJA_CLIENTES.md` | Flujo de caja + clientes/WhatsApp v0.2.0 y diseño Créditos Fase 2 |
+| `docs/CAJA_CLIENTES.md` | Flujo de caja + clientes/WhatsApp v0.2.0 y Créditos v0.3.0 |
+| `docs/FE_LOTES.md` | Lotes FEFO + FE v4.4 pre-firma v0.4.0 y pendiente (firma/ATV) |
 | `docs/ROADMAP_HOY.md` | Plan <8h para terminar hoy |
 | `docs/BACKLOG.md` | Parking post-hoy + deuda conocida |
 | `CHANGELOG.md` | Historial de versiones |

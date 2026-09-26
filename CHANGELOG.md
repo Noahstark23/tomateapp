@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## v0.4.0-lotes-fe (2026-09-26, bloque FE + lotes, QA loop verde)
+- DB **v5 + migración 4→5 sin pérdida** (tabla `lots`, `waste.lot_id`, receptor,
+  CABYS/unidad, consecutivo/`fe_status`; schema `5.json` versionado).
+- **Lotes FEFO**: entrada con vencimiento auto, consumo en venta y merma,
+  badge SALE PRIMERO + alerta ≤1 día. E2E: 10 → 7 → 6 → 5/10.
+- **FE v4.4 pre-firma**: receptor por cliente, CABYS por producto, consecutivo
+  auto, `FeXml` + 4 tests, sección con selector IVA y botón XML con validación
+  (cédula + CABYS). E2E: `FE-00100001010000000004.xml` → PENDIENTE.
+- 26/26 tests verdes. Detalle en `docs/FE_LOTES.md`. Pendiente validez real:
+  `FeConfig` emisor, tarifa IVA con contador, firma .p12 y envío ATV.
+
 ## v0.3.0-creditos (2026-09-26, sprint final: lista para uso)
 - Schema Room **v4 + migración 3→4 sin pérdida** (verificada en emulador con datos reales):
   `clients` += `phone/type/credit_limit` (phone hereda `contact_info`),

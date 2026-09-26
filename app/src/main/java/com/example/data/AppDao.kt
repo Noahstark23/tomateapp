@@ -38,10 +38,27 @@ interface AppDao {
     // ---------------------------------------------------------------------
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertInvoice(invoice: Invoice)
+    suspend fun insertInvoice(invoice: Invoice): Long
 
     @Query("SELECT * FROM invoices WHERE ledger_date = :date ORDER BY timestamp DESC")
     fun getInvoicesForDate(date: String): Flow<List<Invoice>>
+
+    @Query(
+        "SELECT i.id AS id, i.ledger_date AS ledger_date, i.client_id AS client_id, " +
+            "c.name AS clientName, c.id_type AS idType, c.id_number AS idNumber, " +
+            "c.email AS email, inv.item_name AS itemName, inv.cabys AS cabys, " +
+            "inv.unit AS unit, i.quantity AS quantity, " +
+            "i.unit_price AS unit_price, i.total_amount AS total_amount, " +
+            "i.is_credit AS is_credit, i.paid_amount AS paid_amount, " +
+            "i.consecutive AS consecutive, i.fe_status AS fe_status " +
+            "FROM invoices i JOIN clients c ON c.id = i.client_id " +
+            "JOIN inventory inv ON inv.id = i.inventory_id " +
+            "WHERE i.ledger_date = :date ORDER BY i.timestamp DESC"
+    )
+    fun getInvoiceDetails(date: String): Flow<List<InvoiceDetail>>
+
+    @Query("UPDATE invoices SET fe_status = :status WHERE id = :invoiceId")
+    suspend fun setFeStatus(invoiceId: Int, status: String)
 
     // ---------------------------------------------------------------------
     // Gastos
@@ -99,6 +116,9 @@ interface AppDao {
             "WHERE id = :inventoryId"
     )
     suspend fun updatePrices(inventoryId: Int, salePrice: Double, costPrice: Double)
+
+    @Query("UPDATE inventory SET cabys = :cabys, unit = :unit WHERE id = :inventoryId")
+    suspend fun updateCatalog(inventoryId: Int, cabys: String, unit: String)
 
     @Query(
         "UPDATE inventory SET current_stock = current_stock + :quantity, " +
@@ -210,6 +230,59 @@ interface AppDao {
     fun getCollectionsSeries(start: String, end: String): Flow<List<DateTotal>>
 
     // ---------------------------------------------------------------------
+    // Lotes + FEFO
+    // ---------------------------------------------------------------------
+
+    @Insert
+    suspend fun insertLot(lot: Lot): Long
+
+    @Query(
+        "SELECT * FROM lots WHERE inventory_id = :inventoryId AND qty_current > 0 " +
+            "ORDER BY fecha_limite ASC, fecha_ingreso ASC"
+    )
+    fun getLotsForProduct(inventoryId: Int): Flow<List<Lot>>
+
+    @Query(
+        "SELECT * FROM lots WHERE inventory_id = :inventoryId AND qty_current > 0 " +
+            "ORDER BY fecha_limite ASC, timestamp ASC"
+    )
+    suspend fun getLotsForConsumeSync(inventoryId: Int): List<Lot>
+
+    @Query("UPDATE lots SET qty_current = qty_current - :quantity WHERE id = :lotId")
+    suspend fun consumeLot(lotId: Int, quantity: Int)
+
+    /**
+     * Entrada de mercadería con lote: crea el lote y suma el stock del
+     * producto en la misma transacción. Devuelve el id del lote.
+     */
+    @Transaction
+    suspend fun registerLotEntry(inventoryId: Int, lot: Lot, quantity: Int): Long {
+        val lotId = insertLot(lot.copy(qty_initial = quantity, qty_current = quantity))
+        addStock(inventoryId, quantity)
+        return lotId
+    }
+
+    /**
+     * Consume stock de lotes por FEFO (vence-primero-sale-primero).
+     * Devuelve el primer lote tocado (trazabilidad) o null si no hay lotes
+     * (stock legacy sin trazabilidad: igual se vende del global).
+     */
+    suspend fun consumeFefo(inventoryId: Int, quantity: Int): Int? {
+        var remaining = quantity
+        var first: Int? = null
+        for (lot in getLotsForConsumeSync(inventoryId)) {
+            if (remaining <= 0) break
+            val take = minOf(remaining, lot.qty_current)
+            if (take > 0) {
+                consumeLot(lot.id, take)
+                remaining -= take
+                if (first == null) first = lot.id
+            }
+        }
+        return first
+    }
+
+    // ---------------------------------------------------------------------
     // Transacciones de negocio
     // ---------------------------------------------------------------------
 
@@ -286,6 +359,7 @@ interface AppDao {
         }
 
         subtractInventoryStock(inventoryId, quantity)
+        consumeFefo(inventoryId, quantity)
 
         val totalCost = quantity * item.purchase_price
         val margin = if (totalAmount > 0) (totalAmount - totalCost) / totalAmount * 100.0 else 0.0
@@ -301,9 +375,14 @@ interface AppDao {
             profit_margin = margin,
             is_credit = isCredit
         )
-        insertInvoice(invoice)
+        val rowId = insertInvoice(invoice)
+        // Consecutivo FE interno: sucursal(3)+terminal(5)+tipo FE(2)+seq(10).
+        // Válido tributariamente solo tras firma y envío a ATV.
+        val consecutive = "001" + "00001" + "01" + rowId.toString().padStart(10, '0')
+        val saved = invoice.copy(id = rowId.toInt(), consecutive = consecutive)
+        updateInvoice(saved)
         recalculateLedger(date)
-        return invoice
+        return saved
     }
 
     /**
@@ -358,8 +437,9 @@ interface AppDao {
     }
 
     /**
-     * Registra merma: descuenta stock y valora la pérdida al purchase_price
-     * vigente. Devuelve el registro creado, o null si no hay stock suficiente.
+     * Registra merma: descuenta stock global + lote FEFO y valora la pérdida
+     * al purchase_price vigente. Devuelve el registro creado, o null si no
+     * hay stock suficiente.
      */
     @Transaction
     suspend fun processWaste(date: String, inventoryId: Int, quantity: Int, reason: String): Waste? {
@@ -367,13 +447,15 @@ interface AppDao {
         if (quantity <= 0 || quantity > item.current_stock) return null
 
         subtractInventoryStock(inventoryId, quantity)
+        val lotId = consumeFefo(inventoryId, quantity)
 
         val waste = Waste(
             ledger_date = date,
             inventory_id = inventoryId,
             quantity = quantity,
             financial_loss = quantity * item.purchase_price,
-            reason = reason
+            reason = reason,
+            lot_id = lotId
         )
         insertWaste(waste)
         recalculateLedger(date)

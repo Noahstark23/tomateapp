@@ -116,6 +116,60 @@ class DashboardRepository(private val appDao: AppDao) {
     /** Entrada de mercadería: suma stock inicial y actual. */
     suspend fun addStock(inventoryId: Int, quantity: Int) = appDao.addStock(inventoryId, quantity)
 
+    suspend fun updateCatalog(inventoryId: Int, cabys: String, unit: String) =
+        appDao.updateCatalog(inventoryId, cabys, unit)
+
+    // --- Lotes ----------------------------------------------------------------
+
+    fun getLotsForProduct(inventoryId: Int): Flow<List<Lot>> =
+        appDao.getLotsForProduct(inventoryId)
+
+    /**
+     * Registra entrada de lote con vencimiento (fecha_limite = ingreso + días
+     * de vida útil) y suma el stock. Devuelve el id del lote.
+     */
+    suspend fun registerLot(
+        date: String,
+        inventoryId: Int,
+        supplier: String,
+        variedad: String,
+        calibre: String,
+        calidad: String,
+        quantity: Int,
+        costTotal: Double,
+        shelfLifeDays: Int
+    ): Long {
+        val ingreso = java.time.LocalDate.parse(date)
+        val limite = ingreso.plusDays(shelfLifeDays.coerceAtLeast(1).toLong())
+        return appDao.registerLotEntry(
+            inventoryId,
+            Lot(
+                inventory_id = inventoryId,
+                supplier = supplier,
+                variedad = variedad,
+                calibre = calibre,
+                calidad = calidad,
+                cost_total = costTotal,
+                fecha_ingreso = date,
+                fecha_limite = limite.toString()
+            ),
+            quantity
+        )
+    }
+
+    // --- FE v4.4 ----------------------------------------------------------------
+
+    fun getInvoiceDetails(date: String): Flow<List<InvoiceDetail>> =
+        appDao.getInvoiceDetails(date)
+    suspend fun getInvoiceById(id: Int) = appDao.getInvoiceByIdSync(id)
+
+    suspend fun getClientById(id: Int) = appDao.getClientByIdSync(id)
+
+    suspend fun getInventoryById(id: Int) = appDao.getInventoryByIdSync(id)
+
+    suspend fun setFeStatus(invoiceId: Int, status: String) =
+        appDao.setFeStatus(invoiceId, status)
+
     // --- Créditos y cobranza -------------------------------------------------
 
     fun getCreditBalances(): Flow<List<ClientBalance>> = appDao.getCreditBalances()

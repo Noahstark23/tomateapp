@@ -57,11 +57,14 @@ import android.widget.Toast
 fun ReportsScreen(viewModel: DashboardViewModel) {
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val ledgers by viewModel.historicalLedgers.collectAsStateWithLifecycle()
+    val invoiceDetails by viewModel.invoiceDetails.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     var showAddProduct by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<Inventory?>(null) }
+    var lotsItem by remember { mutableStateOf<Inventory?>(null) }
+    var ivaRate by remember { mutableStateOf(0.01) }
 
     val format = NumberFormat.getCurrencyInstance(Locale("es", "CR"))
 
@@ -154,17 +157,22 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                                 val stockColor = if (isLowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                 val stockContainer = if (isLowStock) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
 
-                                Surface(
-                                    color = stockContainer,
-                                    shape = RoundedCornerShape(8.dp),
-                                ) {
-                                    Text(
-                                        "${item.current_stock}",
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = stockColor
-                                    )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Surface(
+                                        color = stockContainer,
+                                        shape = RoundedCornerShape(8.dp),
+                                    ) {
+                                        Text(
+                                            "${item.current_stock}",
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = stockColor
+                                        )
+                                    }
+                                    TextButton(onClick = { lotsItem = item }) {
+                                        Text("📦 Lotes", style = MaterialTheme.typography.labelSmall)
+                                    }
                                 }
                             }
                             if (index < inventory.size - 1) {
@@ -211,6 +219,87 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     ) { Text("Exportar CSV") }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            item {
+                Text(
+                    "Facturas electrónicas (pre-firma)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    "XML v4.4 listo para firmar (.p12) y enviar a ATV. Sin firma no tiene validez. IVA: verificar con su contador.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(0.01 to "1%", 0.13 to "13%", 0.0 to "Exento").forEach { (rate, label) ->
+                        OutlinedButton(
+                            onClick = { ivaRate = rate },
+                            modifier = Modifier.weight(1f),
+                            border = if (ivaRate == rate) BorderStroke(
+                                2.dp, MaterialTheme.colorScheme.primary
+                            ) else null
+                        ) { Text(label) }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            items(invoiceDetails) { inv ->
+                val ready = inv.idNumber.isNotBlank() && inv.cabys.isNotBlank()
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${inv.clientName} · ${inv.quantity}× ${inv.itemName}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Cons. ...${inv.consecutive.takeLast(6)} · ${format.format(inv.total_amount)} · ${inv.fe_status}" +
+                                    if (ready) "" else " · falta cédula/CABYS",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val uri = viewModel.exportInvoiceXml(context, inv.id, ivaRate)
+                                    if (uri == null) {
+                                        Toast.makeText(context, "No se pudo generar el XML", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        val share = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/xml"
+                                            putExtra(Intent.EXTRA_STREAM, uri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(Intent.createChooser(share, "Enviar XML FE"))
+                                    }
+                                }
+                            },
+                            enabled = ready,
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("🧾 XML") }
+                    }
+                }
             }
 
             items(ledgers.take(30)) { ledger ->
@@ -318,12 +407,21 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
     editingItem?.let { item ->
         EditProductDialog(
             item = item,
-            onConfirm = { sale, cost, entry ->
+            onConfirm = { sale, cost, entry, cabys, unit ->
                 viewModel.updatePrices(item.id, sale, cost)
+                viewModel.updateCatalog(item.id, cabys, unit)
                 if (entry > 0) viewModel.addStock(item.id, entry)
                 editingItem = null
             },
             onDismiss = { editingItem = null }
+        )
+    }
+
+    lotsItem?.let { item ->
+        LotsDialog(
+            item = item,
+            viewModel = viewModel,
+            onDismiss = { lotsItem = null }
         )
     }
 }
@@ -372,16 +470,18 @@ private fun AddProductDialog(
     )
 }
 
-/** Edita precios vigentes y registra entrada de mercadería. */
+/** Edita precios vigentes, CABYS/unidad FE y registra entrada de mercadería. */
 @Composable
 private fun EditProductDialog(
     item: Inventory,
-    onConfirm: (Double, Double, Int) -> Unit,
+    onConfirm: (Double, Double, Int, String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var saleStr by remember { mutableStateOf(item.sale_price.toString()) }
     var costStr by remember { mutableStateOf(item.purchase_price.toString()) }
     var entryStr by remember { mutableStateOf("") }
+    var cabys by remember { mutableStateOf(item.cabys) }
+    var unit by remember { mutableStateOf(item.unit.ifEmpty { "Unid" }) }
 
     val sale = saleStr.toDoubleOrNull()
     val cost = costStr.toDoubleOrNull()
@@ -404,14 +504,169 @@ private fun EditProductDialog(
                 ProductNumberField("Costo por unidad (CRC)", costStr, { costStr = it }, KeyboardType.Number)
                 Spacer(modifier = Modifier.height(8.dp))
                 ProductNumberField("Entrada de mercadería (+stock)", entryStr, { entryStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("CABYS Hacienda", cabys, { cabys = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Unidad (Unid/kg/Caja)", unit, { unit = it }, KeyboardType.Text)
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(sale!!, cost!!, entry) },
+                onClick = { onConfirm(sale!!, cost!!, entry, cabys, unit.ifBlank { "Unid" }) },
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
             ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+/**
+ * Lotes del producto con consumo FEFO: el primero de la lista es el próximo
+ * en salir. Alerta en rojo si vence en 1 día o menos.
+ */
+@Composable
+private fun LotsDialog(
+    item: Inventory,
+    viewModel: DashboardViewModel,
+    onDismiss: () -> Unit
+) {
+    val lots by viewModel.lotsFor(item.id).collectAsStateWithLifecycle()
+    var showEntry by remember { mutableStateOf(false) }
+    val today = remember { java.time.LocalDate.now() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Lotes · ${item.item_name}", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                if (lots.isEmpty()) {
+                    Text(
+                        "Sin lotes con trazabilidad. Registre la entrada para activar FEFO; mientras tanto las ventas salen del stock global.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                lots.forEachIndexed { index, lot ->
+                    val daysLeft = try {
+                        java.time.temporal.ChronoUnit.DAYS.between(
+                            today, java.time.LocalDate.parse(lot.fecha_limite)
+                        )
+                    } catch (e: Exception) { 99L }
+                    val urgent = daysLeft <= 1
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${lot.supplier.ifEmpty { "Sin proveedor" }}" +
+                                    (if (lot.variedad.isNotBlank()) " · ${lot.variedad}" else "") +
+                                    (if (lot.calibre.isNotBlank()) " ${lot.calibre}" else "") +
+                                    (if (lot.calidad.isNotBlank()) " ${lot.calidad}" else ""),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "${lot.qty_current}/${lot.qty_initial} uds · vence ${lot.fecha_limite}" +
+                                    (if (index == 0) " · ⏩ SALE PRIMERO" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (urgent) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (urgent) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { showEntry = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("+ Entrada de lote") }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+
+    if (showEntry) {
+        LotEntryDialog(
+            onConfirm = { supplier, variedad, calibre, calidad, qty, cost, days ->
+                viewModel.registerLot(
+                    item.id, supplier, variedad, calibre, calidad, qty, cost, days
+                ) { showEntry = false }
+            },
+            onDismiss = { showEntry = false }
+        )
+    }
+}
+
+/** Entrada de lote: proveedor, variedad, calibre, calidad, cantidad, costo y vida útil. */
+@Composable
+private fun LotEntryDialog(
+    onConfirm: (String, String, String, String, Int, Double, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var supplier by remember { mutableStateOf("") }
+    var variedad by remember { mutableStateOf("") }
+    var calibre by remember { mutableStateOf("") }
+    var calidad by remember { mutableStateOf("Primera") }
+    var qtyStr by remember { mutableStateOf("") }
+    var costStr by remember { mutableStateOf("") }
+    var daysStr by remember { mutableStateOf("4") }
+
+    val qty = qtyStr.toIntOrNull()
+    val cost = costStr.toDoubleOrNull()
+    val days = daysStr.toIntOrNull()
+    val canConfirm = qty != null && qty > 0 && cost != null && cost >= 0 &&
+        days != null && days in 1..30
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Entrada de lote", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                ProductNumberField("Proveedor / finca", supplier, { supplier = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Variedad (ej. Candela)", variedad, { variedad = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Primera", "Segunda", "Tercera").forEach { option ->
+                        OutlinedButton(
+                            onClick = { calidad = option },
+                            modifier = Modifier.weight(1f),
+                            border = if (calidad == option) BorderStroke(
+                                2.dp, MaterialTheme.colorScheme.primary
+                            ) else null
+                        ) { Text(option, style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Calibre (ej. GG/G/M)", calibre, { calibre = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Cantidad (uds)", qtyStr, { qtyStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Costo total lote (CRC)", costStr, { costStr = it }, KeyboardType.Number)
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Vida útil (días, límite = hoy + días)", daysStr, { daysStr = it }, KeyboardType.Number)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(supplier, variedad, calibre, calidad, qty!!, cost!!, days!!)
+                },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Guardar lote") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }

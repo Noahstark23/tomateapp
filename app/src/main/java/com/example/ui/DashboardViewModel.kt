@@ -201,6 +201,97 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         viewModelScope.launch { repository.addStock(inventoryId, quantity) }
     }
 
+    fun updateCatalog(inventoryId: Int, cabys: String, unit: String) {
+        viewModelScope.launch { repository.updateCatalog(inventoryId, cabys.trim(), unit.trim()) }
+    }
+
+    // --- Lotes -------------------------------------------------------------------
+
+    fun lotsFor(inventoryId: Int): StateFlow<List<com.example.data.Lot>> =
+        repository.getLotsForProduct(inventoryId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /**
+     * Entrada de lote con vencimiento (límite = hoy + días de vida útil) y
+     * suma de stock en la misma transacción.
+     */
+    fun registerLot(
+        inventoryId: Int,
+        supplier: String,
+        variedad: String,
+        calibre: String,
+        calidad: String,
+        quantity: Int,
+        costTotal: Double,
+        shelfLifeDays: Int,
+        onDone: () -> Unit = {}
+    ) {
+        if (quantity <= 0 || costTotal < 0) return
+        viewModelScope.launch {
+            repository.registerLot(
+                currentDate, inventoryId, supplier.trim(), variedad.trim(),
+                calibre.trim(), calidad.trim(), quantity, costTotal, shelfLifeDays
+            )
+            onDone()
+        }
+    }
+
+    // --- Datos FE del cliente ------------------------------------------------------
+
+    fun updateClientFe(clientId: Int, idType: String, idNumber: String, email: String) {
+        viewModelScope.launch {
+            val client = repository.getClientById(clientId) ?: return@launch
+            repository.updateClient(
+                client.copy(
+                    id_type = idType,
+                    id_number = idNumber.filter { it.isDigit() },
+                    email = email.trim()
+                )
+            )
+        }
+    }
+
+    // --- XML FE v4.4 (pre-firma) ----------------------------------------------------
+
+    val invoiceDetails: StateFlow<List<com.example.data.InvoiceDetail>> =
+        repository.getInvoiceDetails(currentDate)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /**
+     * Genera el XML pre-firma de una factura y marca su estado PENDIENTE
+     * (pendiente de firma .p12 y envío a ATV). Devuelve el Uri o null.
+     */
+    suspend fun exportInvoiceXml(
+        context: android.content.Context,
+        invoiceId: Int,
+        ivaRate: Double
+    ): android.net.Uri? {
+        return try {
+            val invoice = repository.getInvoiceById(invoiceId) ?: return null
+            val client = repository.getClientById(invoice.client_id) ?: return null
+            val item = repository.getInventoryById(invoice.inventory_id) ?: return null
+            val xml = com.example.fe.FeXml.facturaXml(invoice, client, item, ivaRate)
+            val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+            val seq = invoice.consecutive.ifEmpty { invoiceId.toString() }
+            val file = java.io.File(dir, "FE-$seq.xml")
+            file.writeText(xml, Charsets.UTF_8)
+            repository.setFeStatus(invoiceId, "PENDIENTE")
+            androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     // --- Exportar CSV para el contador (FE v4.4) --------------------------------
 
     /**
