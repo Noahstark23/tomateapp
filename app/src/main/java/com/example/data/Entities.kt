@@ -135,6 +135,10 @@ data class Waste(
     val financial_loss: Double,
     val reason: String = "",
     val lot_id: Int? = null,
+    /** Causa codificada: PODRIDO, APLASTADO, DESHIDRATADO, OTRO. */
+    val causa: String = "",
+    /** Etapa: COSECHA, TRANSPORTE, BODEGA, TRAMO. */
+    val etapa: String = "",
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -181,6 +185,20 @@ data class Payment(
 data class ClientBalance(
     val clientId: Int,
     val balance: Double
+)
+
+/** Alerta operativa: lote con stock que vence en la fecha límite o antes. */
+data class LotAlert(
+    val lotId: Int,
+    val itemName: String,
+    val qty: Int,
+    val fecha_limite: String
+)
+
+/** Merma del día agrupada por causa codificada (no es tabla). */
+data class WasteCauseTotal(
+    val causa: String,
+    val total: Double
 )
 
 /** Total por día para series de proyección (no es tabla). */

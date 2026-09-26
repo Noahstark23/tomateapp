@@ -17,7 +17,7 @@ import androidx.room.TypeConverters
         Payment::class,
         Lot::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -34,9 +34,17 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "nortex_database"
-                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5).build()
+                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /** Cierra la BD (necesario antes de restaurar un respaldo). */
+        fun closeDatabase() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
             }
         }
     }

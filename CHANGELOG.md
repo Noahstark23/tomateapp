@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## v0.5.0-robustez (2026-09-26, loop continuo: lista para operar)
+- **Bug crítico corregido**: `initTestData` leía `StateFlow.value` (vacío antes del
+  primer emit de Room) y duplicaba clientes/productos en cada arranque. Ahora
+  `ensureSeeds()` transaccional con COUNT en BD. Verificado: reinicio en frío
+  deja exactamente 1 Primera + 1 Segunda.
+- **Respaldo/restauración**: exporta el `.db` (con checkpoint WAL) por share +
+  importa desde picker con reinicio. Sin esto, perder el teléfono = perder todo.
+- **Abono a factura específica** (antes solo FIFO global) con validación de saldo.
+- **Merma codificada**: causa (PODRIDO/APLASTADO/DESHIDRATADO/OTRO) + etapa
+  (COSECHA/TRANSPORTE/BODEGA/TRAMO), migración v5→v6, reporte por causa y CSV
+  con columnas causa/etapa. Histórica = "Sin clasificar".
+- **Tipos de cliente** (TRAMO/FERIA/SODA/SUPER/PROVEEDOR) en el alta + cupo editable
+  también desde Clientes.
+- **Alertas operativas** en Inicio: lotes por vencer (remate), sin stock y stock bajo.
+- QA: ANR investigado con traces — fue input-timeout por atasco del emulador
+  (main thread idle), no bug de la app. 26/26 tests verdes, E2E completo.
+
 ## v0.4.0-lotes-fe (2026-09-26, bloque FE + lotes, QA loop verde)
 - DB **v5 + migración 4→5 sin pérdida** (tabla `lots`, `waste.lot_id`, receptor,
   CABYS/unidad, consecutivo/`fe_status`; schema `5.json` versionado).

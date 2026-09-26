@@ -58,6 +58,7 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val ledgers by viewModel.historicalLedgers.collectAsStateWithLifecycle()
     val invoiceDetails by viewModel.invoiceDetails.collectAsStateWithLifecycle()
+    val wasteByCause by viewModel.wasteByCause.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -65,6 +66,22 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
     var editingItem by remember { mutableStateOf<Inventory?>(null) }
     var lotsItem by remember { mutableStateOf<Inventory?>(null) }
     var ivaRate by remember { mutableStateOf(0.01) }
+
+    val restorePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val ok = viewModel.restoreDatabase(context, uri)
+                Toast.makeText(
+                    context,
+                    if (ok) "Respaldo restaurado: reinicie la app" else "No se pudo restaurar",
+                    Toast.LENGTH_LONG
+                ).show()
+                if (ok) (context as? android.app.Activity)?.recreate()
+            }
+        }
+    }
 
     val format = NumberFormat.getCurrencyInstance(Locale("es", "CR"))
 
@@ -202,6 +219,34 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     OutlinedButton(
                         onClick = {
                             scope.launch {
+                                val uri = viewModel.backupDatabase(context)
+                                if (uri == null) {
+                                    Toast.makeText(context, "No se pudo crear el respaldo", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val share = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/octet-stream"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(share, "Guardar respaldo"))
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("💾 Respaldo") }
+                    OutlinedButton(
+                        onClick = { restorePicker.launch("application/octet-stream") },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("♻️ Restaurar") }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
                                 val uri = viewModel.exportDayCsv(context)
                                 if (uri == null) {
                                     Toast.makeText(context, "No se pudo generar el CSV", Toast.LENGTH_SHORT).show()
@@ -219,6 +264,32 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
                     ) { Text("Exportar CSV") }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                if (wasteByCause.isNotEmpty()) {
+                    Text(
+                        "Merma de hoy por causa",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    wasteByCause.forEach { row ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                if (row.causa.isBlank()) "Sin clasificar" else row.causa,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                format.format(row.total),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
 
             item {

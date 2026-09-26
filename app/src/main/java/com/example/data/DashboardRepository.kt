@@ -75,17 +75,30 @@ class DashboardRepository(private val appDao: AppDao) {
     )
 
     /** Registra merma valorada a costo (reduce stock y ganancia, no caja). Null si no hay stock. */
-    suspend fun registerWaste(date: String, inventoryId: Int, quantity: Int, reason: String): Waste? =
-        appDao.processWaste(date, inventoryId, quantity, reason)
+    suspend fun registerWaste(
+        date: String,
+        inventoryId: Int,
+        quantity: Int,
+        reason: String,
+        causa: String = "",
+        etapa: String = ""
+    ): Waste? = appDao.processWaste(date, inventoryId, quantity, reason, causa, etapa)
+
+    fun getExpiringLots(upto: String): Flow<List<LotAlert>> = appDao.getExpiringLots(upto)
+
+    fun getWasteByCause(date: String): Flow<List<WasteCauseTotal>> = appDao.getWasteByCause(date)
 
     suspend fun insertClient(client: Client): Long = appDao.insertClient(client)
 
+    /** Semillas solo si las tablas están vacías (transaccional, sin carreras). */
+    suspend fun ensureSeeds() = appDao.ensureSeeds()
+
     /** Da de alta un cliente y lo devuelve con su id para seleccionarlo de una vez. */
-    suspend fun addClient(name: String, phone: String, creditLimit: Double = 0.0): Client {
+    suspend fun addClient(name: String, phone: String, creditLimit: Double = 0.0, type: String = "TRAMO"): Client {
         val id = appDao.insertClient(
-            Client(name = name, contact_info = phone, phone = phone, credit_limit = creditLimit)
+            Client(name = name, contact_info = phone, phone = phone, credit_limit = creditLimit, type = type)
         )
-        return Client(id = id.toInt(), name = name, contact_info = phone, phone = phone, credit_limit = creditLimit)
+        return Client(id = id.toInt(), name = name, contact_info = phone, phone = phone, credit_limit = creditLimit, type = type)
     }
 
     suspend fun updateClient(client: Client) = appDao.updateClient(client)

@@ -99,6 +99,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
     val clients by viewModel.clients.collectAsStateWithLifecycle()
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val creditBalances by viewModel.creditBalances.collectAsStateWithLifecycle()
+    val expiringLots by viewModel.expiringLots.collectAsStateWithLifecycle()
 
     var activeDialog by remember { mutableStateOf<QuickAction?>(null) }
 
@@ -133,6 +134,17 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                val lowStock = inventory.filter { it.current_stock in 1..9 }
+                val outOfStock = inventory.filter { it.current_stock <= 0 }
+                if (expiringLots.isNotEmpty() || lowStock.isNotEmpty() || outOfStock.isNotEmpty()) {
+                    item {
+                        OperativeAlertsCard(
+                            expiringLots = expiringLots,
+                            lowStock = lowStock,
+                            outOfStock = outOfStock
+                        )
+                    }
+                }
                 item { BusinessHealthCard(runway = cfoState.runway) }
                 item {
                     SafeWithdrawalCard(
@@ -173,7 +185,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             format = format,
             creditBalances = creditBalances,
             onConfirm = { client, item, qty, isCredit -> viewModel.processSale(client, item, qty, isCredit) },
-            onAddClient = { name, phone, limit, onAdded -> viewModel.addClient(name, phone, limit, onAdded) },
+            onAddClient = { name, phone, limit, type, onAdded -> viewModel.addClient(name, phone, limit, type, onAdded) },
             onDismiss = { activeDialog = null }
         )
         QuickAction.EXPENSE -> ExpenseDialog(
@@ -185,7 +197,9 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
         QuickAction.WASTE -> WasteDialog(
             inventory = inventory,
             format = format,
-            onConfirm = { item, qty, reason -> viewModel.registerWaste(item, qty, reason) },
+            onConfirm = { item, qty, reason, causa, etapa ->
+                viewModel.registerWaste(item, qty, reason, causa, etapa)
+            },
             onDismiss = { activeDialog = null }
         )
         QuickAction.ADJUST_INVESTMENT -> AdjustInvestmentDialog(
@@ -195,7 +209,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
         )
         QuickAction.CLIENTS -> ClientsDialog(
             clients = clients,
-            onAddClient = { name, phone, limit, onAdded -> viewModel.addClient(name, phone, limit, onAdded) },
+            onAddClient = { name, phone, limit, type, onAdded -> viewModel.addClient(name, phone, limit, type, onAdded) },
             onSetLimit = { id, limit -> viewModel.setCreditLimit(id, limit) },
             onUpdateFe = { id, type, number, email -> viewModel.updateClientFe(id, type, number, email) },
             onDismiss = { activeDialog = null }
@@ -207,6 +221,57 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
+
+/**
+ * Alertas operativas: lotes por vencer (remate ya), stock bajo y quiebres.
+ * Aparece solo si hay algo que atender.
+ */
+@Composable
+private fun OperativeAlertsCard(
+    expiringLots: List<com.example.data.LotAlert>,
+    lowStock: List<Inventory>,
+    outOfStock: List<Inventory>
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = HealthAmberContainer),
+        border = BorderStroke(1.dp, HealthAmberBorder)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "⚠️ ATENCIÓN OPERATIVA",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = HealthAmber
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            expiringLots.take(3).forEach { lot ->
+                Text(
+                    "⏳ ${lot.itemName}: ${lot.qty} uds vencen ${lot.fecha_limite} (remate hoy)",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = HealthAmber
+                )
+            }
+            outOfStock.forEach { item ->
+                Text(
+                    "🚫 ${item.item_name}: SIN STOCK",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = HealthRed
+                )
+            }
+            lowStock.forEach { item ->
+                Text(
+                    "📉 ${item.item_name}: quedan ${item.current_stock} uds",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun DashboardTopBar(runway: RunwayResult?) {
@@ -725,7 +790,7 @@ private fun SaleDialog(
     format: NumberFormat,
     creditBalances: Map<Int, Double>,
     onConfirm: (Client, Inventory, Int, Boolean) -> Unit,
-    onAddClient: (String, String, Double, (Client) -> Unit) -> Unit,
+    onAddClient: (String, String, Double, String, (Client) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -832,8 +897,8 @@ private fun SaleDialog(
 
                 if (showAddClient) {
                     AddClientDialog(
-                        onConfirm = { name, phone, limit ->
-                            onAddClient(name, phone, limit) { added -> selectedClient = added }
+                        onConfirm = { name, phone, limit, type ->
+                            onAddClient(name, phone, limit, type) { added -> selectedClient = added }
                             showAddClient = false
                         },
                         onDismiss = { showAddClient = false }
@@ -1088,17 +1153,23 @@ private fun ExpenseDialog(
 private fun WasteDialog(
     inventory: List<Inventory>,
     format: NumberFormat,
-    onConfirm: (Inventory, Int, String) -> Unit,
+    onConfirm: (Inventory, Int, String, String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedInventory by remember { mutableStateOf(inventory.firstOrNull()) }
     var quantityStr by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
     var inventoryExpanded by remember { mutableStateOf(false) }
+    var causa by remember { mutableStateOf("PODRIDO") }
+    var causaExpanded by remember { mutableStateOf(false) }
+    var etapa by remember { mutableStateOf("BODEGA") }
+    var etapaExpanded by remember { mutableStateOf(false) }
 
     val quantity = quantityStr.toIntOrNull() ?: 0
     val stockError = selectedInventory != null && quantity > (selectedInventory?.current_stock ?: 0)
     val canConfirm = quantity > 0 && !stockError && selectedInventory != null
+    val causas = listOf("PODRIDO", "APLASTADO", "DESHIDRATADO", "OTRO")
+    val etapas = listOf("COSECHA", "TRANSPORTE", "BODEGA", "TRAMO")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1158,10 +1229,76 @@ private fun WasteDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ExposedDropdownMenuBox(
+                        expanded = causaExpanded,
+                        onExpandedChange = { causaExpanded = !causaExpanded },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        OutlinedTextField(
+                            value = causa,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Causa") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = causaExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = causaExpanded,
+                            onDismissRequest = { causaExpanded = false }
+                        ) {
+                            causas.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    onClick = {
+                                        causa = option
+                                        causaExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = etapaExpanded,
+                        onExpandedChange = { etapaExpanded = !etapaExpanded },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        OutlinedTextField(
+                            value = etapa,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Etapa") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = etapaExpanded) },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = etapaExpanded,
+                            onDismissRequest = { etapaExpanded = false }
+                        ) {
+                            etapas.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    onClick = {
+                                        etapa = option
+                                        etapaExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 OutlinedTextField(
                     value = reason,
                     onValueChange = { reason = it },
-                    label = { Text("Motivo (podrido, aplastado...)") },
+                    label = { Text("Detalle (opcional)") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
@@ -1182,7 +1319,7 @@ private fun WasteDialog(
             Button(
                 onClick = {
                     val item = selectedInventory ?: return@Button
-                    onConfirm(item, quantity, reason)
+                    onConfirm(item, quantity, reason, causa, etapa)
                     onDismiss()
                 },
                 enabled = canConfirm,
@@ -1257,19 +1394,23 @@ private fun AdjustInvestmentDialog(
  * Alta de cliente: nombre + teléfono tico. El teléfono se sanitiza a solo
  * dígitos y se guarda en `Client.contact_info` (convención Fase 1, sin schema).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddClientDialog(
-    onConfirm: (String, String, Double) -> Unit,
+    onConfirm: (String, String, Double, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var limitStr by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf("TRAMO") }
+    var typeExpanded by remember { mutableStateOf(false) }
 
     val cleanName = name.trim()
     val phoneOk = PhoneUtils.isValidCrPhone(phone)
     val limit = limitStr.toDoubleOrNull() ?: 0.0
     val canConfirm = cleanName.isNotEmpty() && cleanName.length <= 60 && phoneOk && limit >= 0
+    val types = listOf("TRAMO", "FERIA", "SODA", "SUPER", "PROVEEDOR")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1308,12 +1449,41 @@ fun AddClientDialog(
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                ExposedDropdownMenuBox(
+                    expanded = typeExpanded,
+                    onExpandedChange = { typeExpanded = !typeExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = type,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Tipo de cliente") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = typeExpanded,
+                        onDismissRequest = { typeExpanded = false }
+                    ) {
+                        types.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    type = option
+                                    typeExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    onConfirm(cleanName, PhoneUtils.sanitize(phone), limit)
+                    onConfirm(cleanName, PhoneUtils.sanitize(phone), limit, type)
                 },
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
@@ -1334,7 +1504,7 @@ fun AddClientDialog(
 @Composable
 private fun ClientsDialog(
     clients: List<Client>,
-    onAddClient: (String, String, Double, (Client) -> Unit) -> Unit,
+    onAddClient: (String, String, Double, String, (Client) -> Unit) -> Unit,
     onSetLimit: (Int, Double) -> Unit,
     onUpdateFe: (Int, String, String, String) -> Unit,
     onDismiss: () -> Unit
@@ -1443,7 +1613,7 @@ private fun ClientsDialog(
 
     if (showAddClient) {
         AddClientDialog(
-            onConfirm = { name, phone, limit -> onAddClient(name, phone, limit) {} },
+            onConfirm = { name, phone, limit, type -> onAddClient(name, phone, limit, type) {} },
             onDismiss = { showAddClient = false }
         )
     }

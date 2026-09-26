@@ -132,10 +132,16 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
-    fun registerWaste(inventoryItem: Inventory, quantity: Int, reason: String) {
+    fun registerWaste(
+        inventoryItem: Inventory,
+        quantity: Int,
+        reason: String,
+        causa: String = "",
+        etapa: String = ""
+    ) {
         if (quantity > inventoryItem.current_stock || quantity <= 0) return
         viewModelScope.launch {
-            repository.registerWaste(currentDate, inventoryItem.id, quantity, reason)
+            repository.registerWaste(currentDate, inventoryItem.id, quantity, reason, causa, etapa)
         }
     }
 
@@ -143,9 +149,15 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
      * Da de alta un cliente (nombre + teléfono ya sanitizado + cupo) y lo
      * devuelve con su id para poder seleccionarlo inmediatamente.
      */
-    fun addClient(name: String, phone: String, creditLimit: Double = 0.0, onAdded: (Client) -> Unit = {}) {
+    fun addClient(
+        name: String,
+        phone: String,
+        creditLimit: Double = 0.0,
+        type: String = "TRAMO",
+        onAdded: (Client) -> Unit = {}
+    ) {
         viewModelScope.launch {
-            onAdded(repository.addClient(name, phone, creditLimit))
+            onAdded(repository.addClient(name, phone, creditLimit, type))
         }
     }
 
@@ -265,6 +277,15 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
                 initialValue = emptyList()
             )
 
+    /** Merma de hoy agrupada por causa codificada. */
+    val wasteByCause: StateFlow<List<com.example.data.WasteCauseTotal>> =
+        repository.getWasteByCause(currentDate)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
     /**
      * Genera el XML pre-firma de una factura y marca su estado PENDIENTE
      * (pendiente de firma .p12 y envío a ATV). Devuelve el Uri o null.
@@ -292,6 +313,66 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
+    // --- Alertas operativas ----------------------------------------------------------
+
+    /**
+     * Lotes que vencen mañana o antes (alerta de remate/merma inminente).
+     * Incluye stock bajo global: la UI combina ambas señales.
+     */
+    val expiringLots: StateFlow<List<com.example.data.LotAlert>> =
+        repository.getExpiringLots(
+            LocalDate.now().plusDays(1).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        ).stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    // --- Respaldo / restauración ----------------------------------------------------
+
+    /**
+     * Copia la BD SQLite (con checkpoint WAL previo) a cache/exports para
+     * compartir. Devuelve el Uri o null.
+     */
+    suspend fun backupDatabase(context: android.content.Context): android.net.Uri? {
+        return try {
+            val db = com.example.data.AppDatabase.getDatabase(context)
+            db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)")
+            val src = context.getDatabasePath("nortex_database")
+            if (!src.exists()) return null
+            val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+            val dst = java.io.File(dir, "tomateapp_respaldo_${currentDate}.db")
+            src.inputStream().use { input -> dst.outputStream().use { input.copyTo(it) } }
+            androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", dst
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Restaura la BD desde un Uri (document picker). Cierra Room, reemplaza el
+     * archivo y devuelve true. La UI debe reiniciar la app después.
+     */
+    suspend fun restoreDatabase(context: android.content.Context, uri: android.net.Uri): Boolean {
+        return try {
+            val db = com.example.data.AppDatabase.getDatabase(context)
+            db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)")
+            com.example.data.AppDatabase.closeDatabase()
+            val dst = context.getDatabasePath("nortex_database")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                dst.outputStream().use { input.copyTo(it) }
+            } ?: return false
+            // Limpia WAL/SHM residuales para que Room reabra limpio.
+            java.io.File(dst.path + "-wal").delete()
+            java.io.File(dst.path + "-shm").delete()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // --- Exportar CSV para el contador (FE v4.4) --------------------------------
 
     /**
@@ -306,7 +387,7 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
             val clients = repository.getClients().first().associateBy { it.id }
             val items = repository.getInventory().first().associateBy { it.id }
             val sb = StringBuilder()
-            sb.append("tipo,fecha,documento,cliente,producto,cantidad,precio_unit,total,es_credito,cobrado,categoria,monto,descripcion,cabys\n")
+            sb.append("tipo,fecha,documento,cliente,producto,cantidad,precio_unit,total,es_credito,cobrado,categoria,monto,descripcion,cabys,causa,etapa\n")
             fun esc(v: String) = "\"" + v.replace("\"", "\"\"") + "\""
             invoices.forEach { inv ->
                 sb.append(
@@ -327,6 +408,19 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
                         "GASTO", exp.ledger_date, exp.id.toString(), "", "", "", "", "",
                         "", "", exp.category.name, exp.amount.toString(),
                         esc(exp.description), ""
+                    ).joinToString(",")
+                ).append("\n")
+            }
+            val waste = repository.getWasteForDate(currentDate).first()
+            val itemsW = repository.getInventory().first().associateBy { it.id }
+            waste.forEach { w ->
+                sb.append(
+                    listOf(
+                        "MERMA", w.ledger_date, w.id.toString(), "",
+                        esc(itemsW[w.inventory_id]?.item_name ?: ""),
+                        w.quantity.toString(), "", w.financial_loss.toString(),
+                        "", "", "", "", esc(w.reason), "",
+                        w.causa, w.etapa
                     ).joinToString(",")
                 ).append("\n")
             }
@@ -352,18 +446,11 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
 
     // Datos semilla solo para desarrollo: en release la bodega empieza vacía
     // y el operador registra sus propios clientes e inventario.
+    // ensureSeeds() cuenta en BD dentro de una transacción (el .value del
+    // StateFlow empieza vacío y duplicaba semillas en cada arranque).
     fun initTestData() {
         if (!BuildConfig.DEBUG) return
-        viewModelScope.launch {
-            if (clients.value.isEmpty()) {
-                repository.insertClient(Client(name = "Client A", contact_info = "123456"))
-                repository.insertClient(Client(name = "Client B", contact_info = "654321"))
-            }
-            if (inventory.value.isEmpty()) {
-                repository.insertInventory(Inventory(item_name = "Caja de Tomate Primera", purchase_price = 5000.0, sale_price = 6000.0, initial_stock = 100, current_stock = 100))
-                repository.insertInventory(Inventory(item_name = "Caja de Tomate Segunda", purchase_price = 3000.0, sale_price = 4500.0, initial_stock = 50, current_stock = 5))
-            }
-        }
+        viewModelScope.launch { repository.ensureSeeds() }
     }
 }
 

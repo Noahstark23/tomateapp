@@ -79,6 +79,11 @@ fun CreditsScreen(viewModel: DashboardViewModel) {
     var showAbono by remember { mutableStateOf(false) }
     var showLimit by remember { mutableStateOf(false) }
 
+    val abonoInvoicesFlow = remember(selectedClientId) {
+        viewModel.openCreditInvoices(selectedClientId ?: -1)
+    }
+    val abonoInvoices by abonoInvoicesFlow.collectAsStateWithLifecycle()
+
     val debtors = remember(clients, balances) {
         clients.filter { (balances[it.id] ?: 0.0) > 0.005 }
             .sortedByDescending { balances[it.id] ?: 0.0 }
@@ -256,9 +261,10 @@ fun CreditsScreen(viewModel: DashboardViewModel) {
         AbonoDialog(
             clientName = selectedClient!!.name,
             balance = balances[selectedClient!!.id] ?: 0.0,
+            invoices = abonoInvoices,
             format = format,
-            onConfirm = { amount ->
-                viewModel.registerPayment(selectedClient!!.id, null, amount) { ok ->
+            onConfirm = { amount, invoiceId ->
+                viewModel.registerPayment(selectedClient!!.id, invoiceId, amount) { ok ->
                     Toast.makeText(
                         context,
                         if (ok) "Abono registrado (suma caja hoy)" else "Monto inválido o sobrepago",
@@ -330,18 +336,22 @@ private fun CreditInvoicesList(
         }
     }
 }
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AbonoDialog(
     clientName: String,
     balance: Double,
+    invoices: List<com.example.data.Invoice>,
     format: NumberFormat,
-    onConfirm: (Double) -> Unit,
+    onConfirm: (Double, Int?) -> Unit,
     onDismiss: () -> Unit
 ) {
     var amountStr by remember { mutableStateOf("") }
+    var targetId by remember { mutableStateOf<Int?>(null) }
+    var invoiceExpanded by remember { mutableStateOf(false) }
     val amount = amountStr.toDoubleOrNull() ?: 0.0
-    val canConfirm = amount > 0 && amount <= balance + 0.005
+    val targetBalance = targetId?.let { id -> invoices.firstOrNull { it.id == id }?.balance } ?: balance
+    val canConfirm = amount > 0 && amount <= targetBalance + 0.005
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -353,6 +363,46 @@ private fun AbonoDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(12.dp))
+                ExposedDropdownMenuBox(
+                    expanded = invoiceExpanded,
+                    onExpandedChange = { invoiceExpanded = !invoiceExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = targetId?.let { id ->
+                            invoices.firstOrNull { it.id == id }?.let {
+                                "${it.ledger_date} · saldo ${format.format(it.balance)}"
+                            }
+                        } ?: "Reparto FIFO (más viejas primero)",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Aplicar a") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = invoiceExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = invoiceExpanded,
+                        onDismissRequest = { invoiceExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Reparto FIFO (más viejas primero)") },
+                            onClick = {
+                                targetId = null
+                                invoiceExpanded = false
+                            }
+                        )
+                        invoices.forEach { inv ->
+                            DropdownMenuItem(
+                                text = { Text("${inv.ledger_date} · ${inv.quantity} uds · saldo ${format.format(inv.balance)}") },
+                                onClick = {
+                                    targetId = inv.id
+                                    invoiceExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = amountStr,
@@ -371,7 +421,7 @@ private fun AbonoDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(amount) },
+                onClick = { onConfirm(amount, targetId) },
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
             ) { Text("Registrar abono") }

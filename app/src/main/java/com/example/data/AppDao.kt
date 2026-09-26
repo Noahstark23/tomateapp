@@ -99,6 +99,41 @@ interface AppDao {
     @Update
     suspend fun updateClient(client: Client)
 
+    /**
+     * Semillas de desarrollo SIN condición de carrera: cuenta en BD dentro de
+     * la transacción en vez de leer StateFlow.value (que empieza vacío antes
+     * de que Room emita y duplicaba clientes/productos en cada arranque).
+     */
+    @Query("SELECT COUNT(*) FROM clients")
+    suspend fun countClients(): Int
+
+    @Query("SELECT COUNT(*) FROM inventory")
+    suspend fun countInventory(): Int
+
+    @Transaction
+    suspend fun ensureSeeds() {
+        if (countClients() == 0) {
+            insertClient(Client(name = "Client A", contact_info = "123456"))
+            insertClient(Client(name = "Client B", contact_info = "654321"))
+        }
+        if (countInventory() == 0) {
+            insertInventory(
+                Inventory(
+                    item_name = "Caja de Tomate Primera",
+                    purchase_price = 5000.0, sale_price = 6000.0,
+                    initial_stock = 100, current_stock = 100
+                )
+            )
+            insertInventory(
+                Inventory(
+                    item_name = "Caja de Tomate Segunda",
+                    purchase_price = 3000.0, sale_price = 4500.0,
+                    initial_stock = 50, current_stock = 50
+                )
+            )
+        }
+    }
+
     @Query("SELECT * FROM inventory")
     fun getInventory(): Flow<List<Inventory>>
 
@@ -442,7 +477,14 @@ interface AppDao {
      * hay stock suficiente.
      */
     @Transaction
-    suspend fun processWaste(date: String, inventoryId: Int, quantity: Int, reason: String): Waste? {
+    suspend fun processWaste(
+        date: String,
+        inventoryId: Int,
+        quantity: Int,
+        reason: String,
+        causa: String = "",
+        etapa: String = ""
+    ): Waste? {
         val item = getInventoryByIdSync(inventoryId) ?: return null
         if (quantity <= 0 || quantity > item.current_stock) return null
 
@@ -455,10 +497,28 @@ interface AppDao {
             quantity = quantity,
             financial_loss = quantity * item.purchase_price,
             reason = reason,
-            lot_id = lotId
+            lot_id = lotId,
+            causa = causa,
+            etapa = etapa
         )
         insertWaste(waste)
         recalculateLedger(date)
         return waste
     }
+
+    /** Lotes con stock que vencen en la fecha dada o antes (alertas). */
+    @Query(
+        "SELECT l.id AS lotId, inv.item_name AS itemName, l.qty_current AS qty, " +
+            "l.fecha_limite AS fecha_limite FROM lots l " +
+            "JOIN inventory inv ON inv.id = l.inventory_id " +
+            "WHERE l.qty_current > 0 AND l.fecha_limite <= :upto ORDER BY l.fecha_limite ASC"
+    )
+    fun getExpiringLots(upto: String): Flow<List<LotAlert>>
+
+    /** Merma del día agrupada por causa (causa vacía = sin clasificar). */
+    @Query(
+        "SELECT causa AS causa, SUM(financial_loss) AS total FROM waste " +
+            "WHERE ledger_date = :date GROUP BY causa"
+    )
+    fun getWasteByCause(date: String): Flow<List<WasteCauseTotal>>
 }

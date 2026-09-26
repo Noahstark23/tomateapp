@@ -6,8 +6,9 @@ saber la ganancia real del día y cuánto efectivo se puede retirar sin descapit
 
 - Package código: `com.example` · `applicationId: com.aistudio.dashboard.nortex`
 - `minSdk 26`, `targetSdk 36`, `compileSdk 36.1`, AGP `9.1.1`, Kotlin `2.2.10`, Room `2.7.0` (DB **v4** con migración 3→4 sin pérdida, `exportSchema=true`)
-- Tabs: Inicio (CFO) · 💰 Caja (flujo + predicción) · 💳 Créditos (fiado/abonos) · 📈 Reportes (lotes + FE)
+- Tabs: Inicio (CFO + alertas operativas) · 💰 Caja (flujo + predicción) · 💳 Créditos (fiado/abonos) · 📈 Reportes (lotes + FE + respaldo)
 - Lotes FEFO con vencimiento; FE v4.4 pre-firma (falta certificado .p12 y ATV para validez)
+- Respaldo/restauración de BD, merma por causa/etapa, tipos de cliente, abono a factura
 - Moneda: colones (CRC, `Locale("es","CR")`). Sin decimales en UI, redondeo feria a ₡50.
 - Offline-first local (Room). Sin backend hoy: Retrofit/Moshi/OkHttp están declarados pero no usados.
 - IA Gemini: declarada en `metadata.json` y `.env.example`, pero `firebase-ai` está comentado en
