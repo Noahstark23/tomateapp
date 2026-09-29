@@ -76,3 +76,22 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         db.execSQL("ALTER TABLE waste ADD COLUMN etapa TEXT NOT NULL DEFAULT ''")
     }
 }
+
+/**
+ * Migración v6 → v7 (arqueo de caja). Solo tabla nueva, sin tocar datos.
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS cash_counts (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "ledger_date TEXT NOT NULL, " +
+                "expected REAL NOT NULL, " +
+                "counted REAL NOT NULL, " +
+                "diff REAL NOT NULL, " +
+                "note TEXT NOT NULL DEFAULT '', " +
+                "timestamp INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_counts_date ON cash_counts(ledger_date)")
+    }
+}

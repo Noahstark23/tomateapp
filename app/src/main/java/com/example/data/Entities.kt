@@ -103,6 +103,7 @@ enum class ExpenseCategory {
     TRANSPORTE,
     SALARIO,
     EMPAQUE,
+    COMPRA_MERCADERIA,
     OTROS
 }
 
@@ -193,6 +194,21 @@ data class LotAlert(
     val itemName: String,
     val qty: Int,
     val fecha_limite: String
+)
+
+/** Arqueo de caja: conteo físico vs esperado del sistema (no es ajuste). */
+@Entity(
+    tableName = "cash_counts",
+    indices = [Index("ledger_date")]
+)
+data class CashCount(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ledger_date: String,
+    val expected: Double,
+    val counted: Double,
+    val diff: Double,
+    val note: String = "",
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 /** Merma del día agrupada por causa codificada (no es tabla). */

@@ -83,12 +83,13 @@ import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT, CLIENTS }
+private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT, CLIENTS, PURCHASE }
 
 fun ExpenseCategory.displayName(): String = when (this) {
     ExpenseCategory.TRANSPORTE -> "Transporte"
     ExpenseCategory.SALARIO -> "Salario"
     ExpenseCategory.EMPAQUE -> "Empaque"
+    ExpenseCategory.COMPRA_MERCADERIA -> "Compra"
     ExpenseCategory.OTROS -> "Otros"
 }
 
@@ -171,7 +172,8 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                         onSale = { activeDialog = QuickAction.SALE },
                         onExpense = { activeDialog = QuickAction.EXPENSE },
                         onWaste = { activeDialog = QuickAction.WASTE },
-                        onClients = { activeDialog = QuickAction.CLIENTS }
+                        onClients = { activeDialog = QuickAction.CLIENTS },
+                        onPurchase = { activeDialog = QuickAction.PURCHASE }
                     )
                 }
             }
@@ -212,6 +214,17 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             onAddClient = { name, phone, limit, type, onAdded -> viewModel.addClient(name, phone, limit, type, onAdded) },
             onSetLimit = { id, limit -> viewModel.setCreditLimit(id, limit) },
             onUpdateFe = { id, type, number, email -> viewModel.updateClientFe(id, type, number, email) },
+            onDismiss = { activeDialog = null }
+        )
+        QuickAction.PURCHASE -> PurchaseDialog(
+            inventory = inventory,
+            format = format,
+            onConfirm = { itemId, supplier, variedad, calibre, calidad, qty, cost, days ->
+                viewModel.registerPurchase(
+                    itemId, supplier, variedad, calibre, calidad, qty, cost, days
+                )
+                activeDialog = null
+            },
             onDismiss = { activeDialog = null }
         )
         null -> Unit
@@ -673,7 +686,8 @@ private fun QuickActionsSection(
     onSale: () -> Unit,
     onExpense: () -> Unit,
     onWaste: () -> Unit,
-    onClients: () -> Unit
+    onClients: () -> Unit,
+    onPurchase: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(
@@ -716,6 +730,15 @@ private fun QuickActionsSection(
             shape = RoundedCornerShape(14.dp)
         ) {
             Text("👤 Clientes y Proveedores", fontWeight = FontWeight.Medium)
+        }
+        OutlinedButton(
+            onClick = onPurchase,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("🧺 Comprar mercadería", fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -1725,6 +1748,193 @@ private fun ClientFeDialog(
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
             ) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Diálogo: Comprar mercadería (lote + gasto en una sola operación)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compra a proveedor al contado: crea el lote con vencimiento, suma el stock
+ * y registra el gasto COMPRA (sale de caja y baja la ganancia).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PurchaseDialog(
+    inventory: List<Inventory>,
+    format: NumberFormat,
+    onConfirm: (Int, String, String, String, String, Int, Double, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedInventory by remember { mutableStateOf(inventory.firstOrNull()) }
+    var inventoryExpanded by remember { mutableStateOf(false) }
+    var supplier by remember { mutableStateOf("") }
+    var variedad by remember { mutableStateOf("") }
+    var calibre by remember { mutableStateOf("") }
+    var calidad by remember { mutableStateOf("Primera") }
+    var calidadExpanded by remember { mutableStateOf(false) }
+    var qtyStr by remember { mutableStateOf("") }
+    var costStr by remember { mutableStateOf("") }
+    var daysStr by remember { mutableStateOf("4") }
+
+    val qty = qtyStr.toIntOrNull()
+    val cost = costStr.toDoubleOrNull()
+    val days = daysStr.toIntOrNull()
+    val canConfirm = selectedInventory != null && qty != null && qty > 0 &&
+        cost != null && cost >= 0 && days != null && days in 1..30
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Comprar mercadería", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(
+                    "Crea el lote, suma el stock y descuenta el pago de tu caja.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                ExposedDropdownMenuBox(
+                    expanded = inventoryExpanded,
+                    onExpandedChange = { inventoryExpanded = !inventoryExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = selectedInventory?.item_name ?: "Seleccione Producto",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Producto") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = inventoryExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = inventoryExpanded,
+                        onDismissRequest = { inventoryExpanded = false }
+                    ) {
+                        inventory.forEach { item ->
+                            DropdownMenuItem(
+                                text = { Text(item.item_name) },
+                                onClick = {
+                                    selectedInventory = item
+                                    inventoryExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = supplier,
+                    onValueChange = { supplier = it },
+                    label = { Text("Proveedor / finca") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = variedad,
+                        onValueChange = { variedad = it },
+                        label = { Text("Variedad") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = calibre,
+                        onValueChange = { calibre = it },
+                        label = { Text("Calibre") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                ExposedDropdownMenuBox(
+                    expanded = calidadExpanded,
+                    onExpandedChange = { calidadExpanded = !calidadExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = calidad,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Calidad") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = calidadExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = calidadExpanded,
+                        onDismissRequest = { calidadExpanded = false }
+                    ) {
+                        listOf("Primera", "Segunda", "Tercera").forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    calidad = option
+                                    calidadExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = qtyStr,
+                        onValueChange = { qtyStr = it },
+                        label = { Text("Cantidad") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = costStr,
+                        onValueChange = { costStr = it },
+                        label = { Text("Costo total CRC") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = daysStr,
+                    onValueChange = { daysStr = it },
+                    label = { Text("Vida útil (días)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                if (canConfirm) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Sale de caja: ${format.format(cost!!)} · Costo unitario: ${format.format(cost / qty!!)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val item = selectedInventory ?: return@Button
+                    onConfirm(item.id, supplier, variedad, calibre, calidad, qty!!, cost!!, days!!)
+                },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Registrar compra") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }

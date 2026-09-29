@@ -317,6 +317,65 @@ interface AppDao {
         return first
     }
 
+    /**
+     * Compra a proveedor al contado: crea el lote, suma el stock y registra
+     * el gasto COMPRA_MERCADERIA en una sola transacción. La compra SÍ sale
+     * de caja (es el egreso más grande de la bodega) y SÍ baja la ganancia.
+     * Devuelve el id del lote o null si el producto no existe o montos inválidos.
+     */
+    @Transaction
+    suspend fun processPurchase(
+        date: String,
+        inventoryId: Int,
+        supplier: String,
+        variedad: String,
+        calibre: String,
+        calidad: String,
+        quantity: Int,
+        costTotal: Double,
+        shelfLifeDays: Int
+    ): Long? {
+        val item = getInventoryByIdSync(inventoryId) ?: return null
+        if (quantity <= 0 || costTotal < 0) return null
+        val ingreso = java.time.LocalDate.parse(date)
+        val limite = ingreso.plusDays(shelfLifeDays.coerceAtLeast(1).toLong())
+        val lotId = insertLot(
+            Lot(
+                inventory_id = inventoryId,
+                supplier = supplier,
+                variedad = variedad,
+                calibre = calibre,
+                calidad = calidad,
+                qty_initial = quantity,
+                qty_current = quantity,
+                cost_total = costTotal,
+                fecha_ingreso = date,
+                fecha_limite = limite.toString()
+            )
+        )
+        addStock(inventoryId, quantity)
+        insertExpense(
+            Expense(
+                ledger_date = date,
+                category = ExpenseCategory.COMPRA_MERCADERIA,
+                amount = costTotal,
+                description = "Compra a $supplier (${quantity} uds)"
+            )
+        )
+        recalculateLedger(date)
+        return lotId
+    }
+
+    // ---------------------------------------------------------------------
+    // Arqueo de caja
+    // ---------------------------------------------------------------------
+
+    @Insert
+    suspend fun insertCashCount(count: CashCount): Long
+
+    @Query("SELECT * FROM cash_counts WHERE ledger_date = :date ORDER BY timestamp DESC")
+    fun getCashCounts(date: String): Flow<List<CashCount>>
+
     // ---------------------------------------------------------------------
     // Transacciones de negocio
     // ---------------------------------------------------------------------

@@ -313,6 +313,60 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
+    // --- Compras y arqueo ---------------------------------------------------------------
+
+    /**
+     * Compra a proveedor: lote + stock + gasto COMPRA en una transacción.
+     * Sale de caja y baja la ganancia (mercadería pagada al contado).
+     */
+    fun registerPurchase(
+        inventoryId: Int,
+        supplier: String,
+        variedad: String,
+        calibre: String,
+        calidad: String,
+        quantity: Int,
+        costTotal: Double,
+        shelfLifeDays: Int,
+        onDone: (Boolean) -> Unit = {}
+    ) {
+        if (quantity <= 0 || costTotal < 0) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            onDone(
+                repository.registerPurchase(
+                    currentDate, inventoryId, supplier.trim(), variedad.trim(),
+                    calibre.trim(), calidad.trim(), quantity, costTotal, shelfLifeDays
+                ) != null
+            )
+        }
+    }
+
+    fun cashCounts(): StateFlow<List<com.example.data.CashCount>> =
+        repository.getCashCounts(currentDate)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /** Guarda un arqueo (conteo físico vs esperado). No ajusta la caja. */
+    fun saveCashCount(expected: Double, counted: Double, note: String) {
+        viewModelScope.launch {
+            repository.insertCashCount(
+                com.example.data.CashCount(
+                    ledger_date = currentDate,
+                    expected = expected,
+                    counted = counted,
+                    diff = counted - expected,
+                    note = note.trim()
+                )
+            )
+        }
+    }
+
     // --- Alertas operativas ----------------------------------------------------------
 
     /**

@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.6.0-compras-arqueo (loop continuo)
+- **Compra a proveedor** en una transacción: lote + stock + gasto COMPRA_MERCADERIA.
+  La compra SÍ sale de caja y baja la ganancia (era el egreso invisible).
+  E2E: día ₡200 000 → compra 5× ₡25 000 → caja ₡175 000, gastos ₡25 000.
+- **Arqueo de caja** en tab Caja: conteo físico vs sistema con diferencia
+  (no ajusta, se investiga) + historial del día. E2E: contado ₡175 000 → dif. ₡0 ✓.
+- Migración v6→v7 (tabla `cash_counts`), schema `7.json`. 26/26 tests verdes.
+
 ## v0.5.0-robustez (2026-09-26, loop continuo: lista para operar)
 - **Bug crítico corregido**: `initTestData` leía `StateFlow.value` (vacío antes del
   primer emit de Room) y duplicaba clientes/productos en cada arranque. Ahora

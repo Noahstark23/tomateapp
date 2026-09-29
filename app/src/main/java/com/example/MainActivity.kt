@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
         ) { padding ->
           NavHost(navController, startDestination = "dashboard", modifier = Modifier.padding(padding)) {
             composable("dashboard") { DashboardScreen(viewModel = viewModel, financialViewModel = financialViewModel) }
-            composable("cash") { CashFlowScreen(financialViewModel = financialViewModel) }
+            composable("cash") { CashFlowScreen(financialViewModel = financialViewModel, viewModel = viewModel) }
             composable("credits") { CreditsScreen(viewModel = viewModel) }
             composable("reports") { ReportsScreen(viewModel = viewModel) }
           }

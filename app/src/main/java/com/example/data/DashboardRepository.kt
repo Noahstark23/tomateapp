@@ -136,7 +136,6 @@ class DashboardRepository(private val appDao: AppDao) {
 
     fun getLotsForProduct(inventoryId: Int): Flow<List<Lot>> =
         appDao.getLotsForProduct(inventoryId)
-
     /**
      * Registra entrada de lote con vencimiento (fecha_limite = ingreso + días
      * de vida útil) y suma el stock. Devuelve el id del lote.
@@ -171,7 +170,6 @@ class DashboardRepository(private val appDao: AppDao) {
     }
 
     // --- FE v4.4 ----------------------------------------------------------------
-
     fun getInvoiceDetails(date: String): Flow<List<InvoiceDetail>> =
         appDao.getInvoiceDetails(date)
     suspend fun getInvoiceById(id: Int) = appDao.getInvoiceByIdSync(id)
@@ -201,4 +199,24 @@ class DashboardRepository(private val appDao: AppDao) {
     ): Payment? = appDao.processPayment(date, clientId, invoiceId, amount)
 
     fun getPaymentsForDate(date: String): Flow<List<Payment>> = appDao.getPaymentsForDate(date)
+
+    // --- Compras y arqueo ----------------------------------------------------------
+
+    suspend fun registerPurchase(
+        date: String,
+        inventoryId: Int,
+        supplier: String,
+        variedad: String,
+        calibre: String,
+        calidad: String,
+        quantity: Int,
+        costTotal: Double,
+        shelfLifeDays: Int
+    ): Long? = appDao.processPurchase(
+        date, inventoryId, supplier, variedad, calibre, calidad, quantity, costTotal, shelfLifeDays
+    )
+
+    suspend fun insertCashCount(count: CashCount): Long = appDao.insertCashCount(count)
+
+    fun getCashCounts(date: String): Flow<List<CashCount>> = appDao.getCashCounts(date)
 }

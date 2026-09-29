@@ -23,7 +23,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -39,9 +41,11 @@ import java.util.Locale
  * solo en memoria y nunca escribe en la BD.
  */
 @Composable
-fun CashFlowScreen(financialViewModel: FinancialViewModel) {
+fun CashFlowScreen(financialViewModel: FinancialViewModel, viewModel: DashboardViewModel) {
     val state by financialViewModel.cashFlowState.collectAsStateWithLifecycle()
+    val cashCounts by viewModel.cashCounts().collectAsStateWithLifecycle()
     val format = remember { NumberFormat.getCurrencyInstance(Locale("es", "CR")) }
+    var showArqueo by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -195,6 +199,26 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel) {
                 }
             }
 
+            // Arqueo: conteo físico vs sistema.
+            item {
+                val last = cashCounts.firstOrNull()
+                CashCard(
+                    title = "ARQUEO DE CAJA",
+                    subtitle = if (last == null) "Sin arqueos hoy"
+                    else "Último: contado ${format.format(last.counted)} vs sistema ${format.format(last.expected)} (dif. ${format.format(last.diff)})",
+                    rows = emptyList(),
+                    emptyText = null
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { showArqueo = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("🧮 Hacer arqueo", fontWeight = FontWeight.Medium)
+                }
+            }
+
             // Predicción simple 7 días + alerta de quiebre.
             item {
                 Card(
@@ -259,11 +283,95 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel) {
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
+
+    if (showArqueo && state.hasLedger) {
+        ArqueoDialog(
+            expected = state.currentCash,
+            format = format,
+            onConfirm = { counted, note ->
+                viewModel.saveCashCount(state.currentCash, counted, note)
+                showArqueo = false
+            },
+            onDismiss = { showArqueo = false }
+        )
+    }
+}
+
+/**
+ * Arqueo: el operador cuenta el efectivo físico y queda registrada la
+ * diferencia contra el sistema. No ajusta la caja (la diferencia se investiga).
+ */
+@Composable
+private fun ArqueoDialog(
+    expected: Double,
+    format: NumberFormat,
+    onConfirm: (Double, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var countedStr by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    val counted = countedStr.toDoubleOrNull()
+    val diff = if (counted != null) counted - expected else null
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Arqueo de caja", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text(
+                    "Sistema dice: ${format.format(expected)}. Cuente el efectivo físico.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = countedStr,
+                    onValueChange = { countedStr = it },
+                    label = { Text("Efectivo contado (CRC)") },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                if (diff != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Diferencia: ${format.format(diff)}" +
+                            if (diff == 0.0) " ✓ cuadra" else " (investigar)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (diff == 0.0) CustomOnSuccessVariant
+                        else MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Nota (opcional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.Button(
+                onClick = { if (counted != null) onConfirm(counted, note) },
+                enabled = counted != null && counted >= 0,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Guardar arqueo") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable
-private fun CashCard(
-    title: String,
+private fun CashCard(    title: String,
     subtitle: String? = null,
     rows: List<Pair<String, String>>,
     emptyText: String? = null,
