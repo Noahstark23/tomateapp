@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -83,7 +84,7 @@ import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT, CLIENTS, PURCHASE }
+private enum class QuickAction { SALE, EXPENSE, WASTE, ADJUST_INVESTMENT, CLIENTS, PURCHASE, TRANSFER }
 
 fun ExpenseCategory.displayName(): String = when (this) {
     ExpenseCategory.TRANSPORTE -> "Transporte"
@@ -101,6 +102,9 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val creditBalances by viewModel.creditBalances.collectAsStateWithLifecycle()
     val expiringLots by viewModel.expiringLots.collectAsStateWithLifecycle()
+    val warehouses by viewModel.warehouses.collectAsStateWithLifecycle()
+    val activeWarehouseId by viewModel.activeWarehouseId.collectAsStateWithLifecycle()
+    val activeStock by viewModel.activeStock.collectAsStateWithLifecycle()
 
     var activeDialog by remember { mutableStateOf<QuickAction?>(null) }
 
@@ -135,6 +139,14 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                item {
+                    WarehouseSelector(
+                        warehouses = warehouses,
+                        activeId = activeWarehouseId,
+                        onSelect = { viewModel.setActiveWarehouse(it) },
+                        onAdd = { name -> viewModel.addWarehouse(name) }
+                    )
+                }
                 val lowStock = inventory.filter { it.current_stock in 1..9 }
                 val outOfStock = inventory.filter { it.current_stock <= 0 }
                 if (expiringLots.isNotEmpty() || lowStock.isNotEmpty() || outOfStock.isNotEmpty()) {
@@ -173,7 +185,8 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                         onExpense = { activeDialog = QuickAction.EXPENSE },
                         onWaste = { activeDialog = QuickAction.WASTE },
                         onClients = { activeDialog = QuickAction.CLIENTS },
-                        onPurchase = { activeDialog = QuickAction.PURCHASE }
+                        onPurchase = { activeDialog = QuickAction.PURCHASE },
+                        onTransfer = { activeDialog = QuickAction.TRANSFER }
                     )
                 }
             }
@@ -186,6 +199,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             inventory = inventory,
             format = format,
             creditBalances = creditBalances,
+            activeStock = activeStock,
             onConfirm = { client, item, qty, isCredit -> viewModel.processSale(client, item, qty, isCredit) },
             onAddClient = { name, phone, limit, type, onAdded -> viewModel.addClient(name, phone, limit, type, onAdded) },
             onDismiss = { activeDialog = null }
@@ -199,6 +213,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
         QuickAction.WASTE -> WasteDialog(
             inventory = inventory,
             format = format,
+            activeStock = activeStock,
             onConfirm = { item, qty, reason, causa, etapa ->
                 viewModel.registerWaste(item, qty, reason, causa, etapa)
             },
@@ -225,6 +240,14 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
                 )
                 activeDialog = null
             },
+            onDismiss = { activeDialog = null }
+        )
+        QuickAction.TRANSFER -> TransfersDialog(
+            viewModel = viewModel,
+            warehouses = warehouses,
+            activeId = activeWarehouseId,
+            inventory = inventory,
+            activeStock = activeStock,
             onDismiss = { activeDialog = null }
         )
         null -> Unit
@@ -687,7 +710,8 @@ private fun QuickActionsSection(
     onExpense: () -> Unit,
     onWaste: () -> Unit,
     onClients: () -> Unit,
-    onPurchase: () -> Unit
+    onPurchase: () -> Unit,
+    onTransfer: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(
@@ -739,6 +763,15 @@ private fun QuickActionsSection(
             shape = RoundedCornerShape(14.dp)
         ) {
             Text("🧺 Comprar mercadería", fontWeight = FontWeight.Medium)
+        }
+        OutlinedButton(
+            onClick = onTransfer,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Text("🔀 Traslado entre bodegas", fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -812,6 +845,7 @@ private fun SaleDialog(
     inventory: List<Inventory>,
     format: NumberFormat,
     creditBalances: Map<Int, Double>,
+    activeStock: Map<Int, Int>,
     onConfirm: (Client, Inventory, Int, Boolean) -> Unit,
     onAddClient: (String, String, Double, String, (Client) -> Unit) -> Unit,
     onDismiss: () -> Unit
@@ -843,7 +877,9 @@ private fun SaleDialog(
     }
 
     val quantity = quantityStr.toIntOrNull() ?: 0
-    val stockError = selectedInventory != null && quantity > (selectedInventory?.current_stock ?: 0)
+    // Stock de la bodega activa (el DAO lo revalida; sin fila = 0).
+    val activeQty = selectedInventory?.let { activeStock[it.id] } ?: 0
+    val stockError = selectedInventory != null && quantity > activeQty
     // Fiado: exige cupo y bloquea si saldo + total excede el límite.
     val saleTotal = quantity * (selectedInventory?.sale_price ?: 0.0)
     val clientBalance = selectedClient?.let { creditBalances[it.id] ?: 0.0 } ?: 0.0
@@ -970,7 +1006,7 @@ private fun SaleDialog(
                         value = selectedInventory?.item_name ?: "Seleccione Producto",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Producto (Stock: ${selectedInventory?.current_stock ?: 0})") },
+                        label = { Text("Producto (Bodega: $activeQty)") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = inventoryExpanded) },
                         modifier = Modifier.menuAnchor().fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -1176,6 +1212,7 @@ private fun ExpenseDialog(
 private fun WasteDialog(
     inventory: List<Inventory>,
     format: NumberFormat,
+    activeStock: Map<Int, Int>,
     onConfirm: (Inventory, Int, String, String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1189,7 +1226,8 @@ private fun WasteDialog(
     var etapaExpanded by remember { mutableStateOf(false) }
 
     val quantity = quantityStr.toIntOrNull() ?: 0
-    val stockError = selectedInventory != null && quantity > (selectedInventory?.current_stock ?: 0)
+    val activeWasteQty = selectedInventory?.let { activeStock[it.id] } ?: 0
+    val stockError = selectedInventory != null && quantity > activeWasteQty
     val canConfirm = quantity > 0 && !stockError && selectedInventory != null
     val causas = listOf("PODRIDO", "APLASTADO", "DESHIDRATADO", "OTRO")
     val etapas = listOf("COSECHA", "TRANSPORTE", "BODEGA", "TRAMO")
@@ -1214,7 +1252,7 @@ private fun WasteDialog(
                         value = selectedInventory?.item_name ?: "Seleccione Producto",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Producto (Stock: ${selectedInventory?.current_stock ?: 0})") },
+                        label = { Text("Producto (Bodega: $activeWasteQty)") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = inventoryExpanded) },
                         modifier = Modifier.menuAnchor().fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -1938,6 +1976,292 @@ private fun PurchaseDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Bodegas: selector + traslados
+// ---------------------------------------------------------------------------
+
+/**
+ * Selector de bodega activa (donde se vende/merma/compra) + alta de bodega.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WarehouseSelector(
+    warehouses: List<com.example.data.Warehouse>,
+    activeId: Int,
+    onSelect: (Int) -> Unit,
+    onAdd: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showAdd by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    val active = warehouses.firstOrNull { it.id == activeId } ?: warehouses.firstOrNull()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded },
+                modifier = Modifier.weight(1f)
+            ) {
+                OutlinedTextField(
+                    value = active?.name ?: "Sin bodegas",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Bodega activa") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    warehouses.forEach { wh ->
+                        DropdownMenuItem(
+                            text = { Text(wh.name) },
+                            onClick = {
+                                onSelect(wh.id)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            OutlinedButton(onClick = { showAdd = true }) { Text("+ Bodega") }
+        }
+    }
+
+    if (showAdd) {
+        AlertDialog(
+            onDismissRequest = { showAdd = false },
+            title = { Text("Nueva bodega", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre (ej. Bodega CENADA)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onAdd(name.trim())
+                        name = ""
+                        showAdd = false
+                    },
+                    enabled = name.trim().isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Crear y activar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAdd = false }) { Text("Cancelar") }
+            }
+        )
+    }
+}
+
+/**
+ * Traslado entre bodegas + matriz de stock por bodega e historial del día.
+ * No toca caja.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TransfersDialog(
+    viewModel: DashboardViewModel,
+    warehouses: List<com.example.data.Warehouse>,
+    activeId: Int,
+    inventory: List<Inventory>,
+    activeStock: Map<Int, Int>,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val matrix by viewModel.stockMatrix().collectAsStateWithLifecycle()
+    val transfers by viewModel.transfersToday().collectAsStateWithLifecycle()
+
+    var selectedInventory by remember { mutableStateOf(inventory.firstOrNull()) }
+    var inventoryExpanded by remember { mutableStateOf(false) }
+    var toWarehouse by remember { mutableStateOf(warehouses.firstOrNull { it.id != activeId }) }
+    var toExpanded by remember { mutableStateOf(false) }
+    var qtyStr by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+
+    val qty = qtyStr.toIntOrNull() ?: 0
+    val available = selectedInventory?.let { activeStock[it.id] } ?: 0
+    val canConfirm = selectedInventory != null && toWarehouse != null &&
+        qty > 0 && qty <= available
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Traslado entre bodegas", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                val fromName = warehouses.firstOrNull { it.id == activeId }?.name ?: "origen"
+                Text(
+                    "Origen: $fromName (bodega activa). No mueve caja.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                ExposedDropdownMenuBox(
+                    expanded = toExpanded,
+                    onExpandedChange = { toExpanded = !toExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = toWarehouse?.name ?: "Seleccione destino",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Destino") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = toExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = toExpanded,
+                        onDismissRequest = { toExpanded = false }
+                    ) {
+                        warehouses.filter { it.id != activeId }.forEach { wh ->
+                            DropdownMenuItem(
+                                text = { Text(wh.name) },
+                                onClick = {
+                                    toWarehouse = wh
+                                    toExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                ExposedDropdownMenuBox(
+                    expanded = inventoryExpanded,
+                    onExpandedChange = { inventoryExpanded = !inventoryExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = selectedInventory?.item_name ?: "Seleccione Producto",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Producto (origen: $available)") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = inventoryExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = inventoryExpanded,
+                        onDismissRequest = { inventoryExpanded = false }
+                    ) {
+                        inventory.forEach { item ->
+                            DropdownMenuItem(
+                                text = { Text("${item.item_name} (${activeStock[item.id] ?: 0})") },
+                                onClick = {
+                                    selectedInventory = item
+                                    inventoryExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = qtyStr,
+                    onValueChange = { qtyStr = it },
+                    label = { Text("Cantidad") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Nota (opcional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "Stock por bodega",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                matrix.filter { it.quantity > 0 }.take(12).forEach { row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "${row.warehouseName} · ${row.itemName}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "${row.quantity}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                if (transfers.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Traslados de hoy",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    transfers.take(5).forEach { t ->
+                        val fromN = warehouses.firstOrNull { it.id == t.from_warehouse_id }?.name ?: "?"
+                        val toN = warehouses.firstOrNull { it.id == t.to_warehouse_id }?.name ?: "?"
+                        val itemN = inventory.firstOrNull { it.id == t.inventory_id }?.item_name ?: "#${t.inventory_id}"
+                        Text(
+                            "$fromN → $toN: ${t.quantity}× $itemN",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val item = selectedInventory ?: return@Button
+                    val dest = toWarehouse ?: return@Button
+                    viewModel.registerTransfer(dest.id, item.id, qty, note) { ok ->
+                        android.widget.Toast.makeText(
+                            context,
+                            if (ok) "Traslado registrado" else "Sin stock suficiente en origen",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        if (ok) onDismiss()
+                    }
+                },
+                enabled = canConfirm,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Trasladar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
         }
     )
 }

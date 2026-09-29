@@ -1,6 +1,15 @@
 # CHANGELOG
 
-## v0.6.0-compras-arqueo (loop continuo)
+## v0.7.0-multibodega (loop continuo)
+- **Multi-bodega**: `warehouses` + `warehouse_stock` + `transfers` + `settings`
+  (bodega activa), migración 7→8 que siembra Tramo Principal y reparte el stock
+  global. Ventas/mermas/compras/lotes consumen la bodega activa (DAO bloquea
+  sin stock aunque haya global); traslados mueven stock + lotes FEFO sin caja.
+- UI: selector con alta de bodega, diálogo de traslados con matriz de stock e
+  historial, validación por bodega en venta ("Cantidad excede stock" con 10>5).
+- E2E en BD: Tramo 100→(traslado 5)→ Tramo 100? no: Tramo Primera 100,
+  CENADA 0→5, venta 2 en CENADA → 3, caja 187000 = 200000+12000−25000.
+- 26/26 tests verdes.
 - **Compra a proveedor** en una transacción: lote + stock + gasto COMPRA_MERCADERIA.
   La compra SÍ sale de caja y baja la ganancia (era el egreso invisible).
   E2E: día ₡200 000 → compra 5× ₡25 000 → caja ₡175 000, gastos ₡25 000.

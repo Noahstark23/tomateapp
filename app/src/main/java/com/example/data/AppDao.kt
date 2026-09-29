@@ -161,6 +161,14 @@ interface AppDao {
     )
     suspend fun addStock(inventoryId: Int, quantity: Int)
 
+    /** Entrada simple: suma stock global y de la bodega dada. */
+    @Transaction
+    suspend fun stockEntry(inventoryId: Int, quantity: Int, warehouseId: Int) {
+        addStock(inventoryId, quantity)
+        ensureStockRow(warehouseId, inventoryId)
+        addWarehouseStock(warehouseId, inventoryId, quantity)
+    }
+
     @Query("SELECT * FROM invoices WHERE id = :invoiceId LIMIT 1")
     suspend fun getInvoiceByIdSync(invoiceId: Int): Invoice?
 
@@ -265,6 +273,132 @@ interface AppDao {
     fun getCollectionsSeries(start: String, end: String): Flow<List<DateTotal>>
 
     // ---------------------------------------------------------------------
+    // Bodegas, stock por bodega y traslados
+    // ---------------------------------------------------------------------
+
+    @Query("SELECT * FROM warehouses ORDER BY id ASC")
+    fun getWarehouses(): Flow<List<Warehouse>>
+
+    @Insert
+    suspend fun insertWarehouse(warehouse: Warehouse): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun setSetting(setting: Setting)
+
+    @Query("SELECT `value` FROM settings WHERE `key` = :key LIMIT 1")
+    fun getSetting(key: String): Flow<String?>
+
+    @Query("SELECT * FROM warehouse_stock WHERE warehouse_id = :warehouseId")
+    fun getWarehouseStock(warehouseId: Int): Flow<List<WarehouseStock>>
+
+    @Query(
+        "SELECT w.id AS warehouseId, w.name AS warehouseName, " +
+            "i.id AS inventoryId, i.item_name AS itemName, " +
+            "COALESCE(s.quantity, 0) AS quantity " +
+            "FROM warehouses w CROSS JOIN inventory i " +
+            "LEFT JOIN warehouse_stock s ON s.warehouse_id = w.id AND s.inventory_id = i.id " +
+            "ORDER BY w.id ASC, i.id ASC"
+    )
+    fun getStockMatrix(): Flow<List<WarehouseStockDetail>>
+
+    @Query("SELECT * FROM transfers WHERE ledger_date = :date ORDER BY timestamp DESC")
+    fun getTransfers(date: String): Flow<List<Transfer>>
+
+    @Query(
+        "INSERT OR IGNORE INTO warehouse_stock (warehouse_id, inventory_id, quantity) " +
+            "VALUES (:warehouseId, :inventoryId, 0)"
+    )
+    suspend fun ensureStockRow(warehouseId: Int, inventoryId: Int)
+
+    @Query(
+        "SELECT COALESCE((SELECT quantity FROM warehouse_stock " +
+            "WHERE warehouse_id = :warehouseId AND inventory_id = :inventoryId), 0)"
+    )
+    suspend fun warehouseQty(warehouseId: Int, inventoryId: Int): Int
+
+    @Query(
+        "UPDATE warehouse_stock SET quantity = quantity + :quantity " +
+            "WHERE warehouse_id = :warehouseId AND inventory_id = :inventoryId"
+    )
+    suspend fun addWarehouseStock(warehouseId: Int, inventoryId: Int, quantity: Int)
+
+    @Query(
+        "UPDATE warehouse_stock SET quantity = quantity - :quantity " +
+            "WHERE warehouse_id = :warehouseId AND inventory_id = :inventoryId"
+    )
+    suspend fun subtractWarehouseStock(warehouseId: Int, inventoryId: Int, quantity: Int)
+
+    @Insert
+    suspend fun insertTransfer(transfer: Transfer): Long
+
+    /**
+     * Traslado entre bodegas: mueve stock y reubica lotes FEFO (conservando
+     * sus vencimientos en la bodega destino). No toca caja. Null si origen
+     * y destino coinciden, cantidad inválida o sin stock en origen.
+     */
+    @Transaction
+    suspend fun processTransfer(
+        date: String,
+        fromWarehouseId: Int,
+        toWarehouseId: Int,
+        inventoryId: Int,
+        quantity: Int,
+        note: String
+    ): Transfer? {
+        if (fromWarehouseId == toWarehouseId || quantity <= 0) return null
+        ensureStockRow(fromWarehouseId, inventoryId)
+        ensureStockRow(toWarehouseId, inventoryId)
+        if (warehouseQty(fromWarehouseId, inventoryId) < quantity) return null
+        subtractWarehouseStock(fromWarehouseId, inventoryId, quantity)
+        addWarehouseStock(toWarehouseId, inventoryId, quantity)
+        // Reubica lotes FEFO conservando vencimiento/proveedor.
+        var remaining = quantity
+        var firstLimite: String? = null
+        var firstSupplier = "Traslado"
+        for (lot in getLotsForConsumeSync(inventoryId, fromWarehouseId)) {
+            if (remaining <= 0) break
+            val take = minOf(remaining, lot.qty_current)
+            if (take > 0) {
+                consumeLot(lot.id, take)
+                remaining -= take
+                if (firstLimite == null) {
+                    firstLimite = lot.fecha_limite
+                    firstSupplier = lot.supplier
+                }
+            }
+        }
+        val moved = quantity - remaining
+        if (moved > 0) {
+            val ingreso = java.time.LocalDate.parse(date).toString()
+            insertLot(
+                Lot(
+                    inventory_id = inventoryId,
+                    warehouse_id = toWarehouseId,
+                    supplier = firstSupplier,
+                    variedad = "",
+                    calibre = "",
+                    calidad = "Traslado",
+                    qty_initial = moved,
+                    qty_current = moved,
+                    cost_total = 0.0,
+                    fecha_ingreso = ingreso,
+                    fecha_limite = firstLimite ?: ingreso
+                )
+            )
+        }
+        val transfer = Transfer(
+            from_warehouse_id = fromWarehouseId,
+            to_warehouse_id = toWarehouseId,
+            inventory_id = inventoryId,
+            quantity = quantity,
+            ledger_date = date,
+            note = note
+        )
+        insertTransfer(transfer)
+        return transfer
+    }
+
+    // ---------------------------------------------------------------------
     // Lotes + FEFO
     // ---------------------------------------------------------------------
 
@@ -278,34 +412,36 @@ interface AppDao {
     fun getLotsForProduct(inventoryId: Int): Flow<List<Lot>>
 
     @Query(
-        "SELECT * FROM lots WHERE inventory_id = :inventoryId AND qty_current > 0 " +
-            "ORDER BY fecha_limite ASC, timestamp ASC"
+        "SELECT * FROM lots WHERE inventory_id = :inventoryId AND warehouse_id = :warehouseId " +
+            "AND qty_current > 0 ORDER BY fecha_limite ASC, timestamp ASC"
     )
-    suspend fun getLotsForConsumeSync(inventoryId: Int): List<Lot>
+    suspend fun getLotsForConsumeSync(inventoryId: Int, warehouseId: Int): List<Lot>
 
     @Query("UPDATE lots SET qty_current = qty_current - :quantity WHERE id = :lotId")
     suspend fun consumeLot(lotId: Int, quantity: Int)
 
     /**
-     * Entrada de mercadería con lote: crea el lote y suma el stock del
-     * producto en la misma transacción. Devuelve el id del lote.
+     * Entrada de mercadería con lote: crea el lote y suma el stock (global y
+     * de la bodega) en la misma transacción. Devuelve el id del lote.
      */
     @Transaction
-    suspend fun registerLotEntry(inventoryId: Int, lot: Lot, quantity: Int): Long {
+    suspend fun registerLotEntry(inventoryId: Int, warehouseId: Int, lot: Lot, quantity: Int): Long {
         val lotId = insertLot(lot.copy(qty_initial = quantity, qty_current = quantity))
         addStock(inventoryId, quantity)
+        ensureStockRow(warehouseId, inventoryId)
+        addWarehouseStock(warehouseId, inventoryId, quantity)
         return lotId
     }
 
     /**
-     * Consume stock de lotes por FEFO (vence-primero-sale-primero).
-     * Devuelve el primer lote tocado (trazabilidad) o null si no hay lotes
+     * Consume stock de lotes por FEFO **de la bodega dada** (vence-primero-
+     * sale-primero). Devuelve el primer lote tocado o null si no hay lotes
      * (stock legacy sin trazabilidad: igual se vende del global).
      */
-    suspend fun consumeFefo(inventoryId: Int, quantity: Int): Int? {
+    suspend fun consumeFefo(inventoryId: Int, warehouseId: Int, quantity: Int): Int? {
         var remaining = quantity
         var first: Int? = null
-        for (lot in getLotsForConsumeSync(inventoryId)) {
+        for (lot in getLotsForConsumeSync(inventoryId, warehouseId)) {
             if (remaining <= 0) break
             val take = minOf(remaining, lot.qty_current)
             if (take > 0) {
@@ -327,6 +463,7 @@ interface AppDao {
     suspend fun processPurchase(
         date: String,
         inventoryId: Int,
+        warehouseId: Int,
         supplier: String,
         variedad: String,
         calibre: String,
@@ -339,21 +476,18 @@ interface AppDao {
         if (quantity <= 0 || costTotal < 0) return null
         val ingreso = java.time.LocalDate.parse(date)
         val limite = ingreso.plusDays(shelfLifeDays.coerceAtLeast(1).toLong())
-        val lotId = insertLot(
-            Lot(
-                inventory_id = inventoryId,
-                supplier = supplier,
-                variedad = variedad,
-                calibre = calibre,
-                calidad = calidad,
-                qty_initial = quantity,
-                qty_current = quantity,
-                cost_total = costTotal,
-                fecha_ingreso = date,
-                fecha_limite = limite.toString()
-            )
+        val lot = Lot(
+            inventory_id = inventoryId,
+            warehouse_id = warehouseId,
+            supplier = supplier,
+            variedad = variedad,
+            calibre = calibre,
+            calidad = calidad,
+            cost_total = costTotal,
+            fecha_ingreso = date,
+            fecha_limite = limite.toString()
         )
-        addStock(inventoryId, quantity)
+        val lotId = registerLotEntry(inventoryId, warehouseId, lot, quantity)
         insertExpense(
             Expense(
                 ledger_date = date,
@@ -439,10 +573,13 @@ interface AppDao {
         clientId: Int,
         inventoryId: Int,
         quantity: Int,
-        isCredit: Boolean = false
+        isCredit: Boolean = false,
+        warehouseId: Int
     ): Invoice? {
         val item = getInventoryByIdSync(inventoryId) ?: return null
         if (quantity <= 0 || quantity > item.current_stock) return null
+        ensureStockRow(warehouseId, inventoryId)
+        if (warehouseQty(warehouseId, inventoryId) < quantity) return null
 
         val totalAmount = quantity * item.sale_price
         if (isCredit) {
@@ -453,7 +590,8 @@ interface AppDao {
         }
 
         subtractInventoryStock(inventoryId, quantity)
-        consumeFefo(inventoryId, quantity)
+        subtractWarehouseStock(warehouseId, inventoryId, quantity)
+        consumeFefo(inventoryId, warehouseId, quantity)
 
         val totalCost = quantity * item.purchase_price
         val margin = if (totalAmount > 0) (totalAmount - totalCost) / totalAmount * 100.0 else 0.0
@@ -542,13 +680,17 @@ interface AppDao {
         quantity: Int,
         reason: String,
         causa: String = "",
-        etapa: String = ""
+        etapa: String = "",
+        warehouseId: Int
     ): Waste? {
         val item = getInventoryByIdSync(inventoryId) ?: return null
         if (quantity <= 0 || quantity > item.current_stock) return null
+        ensureStockRow(warehouseId, inventoryId)
+        if (warehouseQty(warehouseId, inventoryId) < quantity) return null
 
         subtractInventoryStock(inventoryId, quantity)
-        val lotId = consumeFefo(inventoryId, quantity)
+        subtractWarehouseStock(warehouseId, inventoryId, quantity)
+        val lotId = consumeFefo(inventoryId, warehouseId, quantity)
 
         val waste = Waste(
             ledger_date = date,

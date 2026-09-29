@@ -112,7 +112,10 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         if (quantity > inventoryItem.current_stock || quantity <= 0) return
 
         viewModelScope.launch {
-            val invoice = repository.registerSale(currentDate, client.id, inventoryItem.id, quantity, isCredit)
+            val warehouseId = activeWarehouseId.first()
+            val invoice = repository.registerSale(
+                currentDate, client.id, inventoryItem.id, quantity, isCredit, warehouseId
+            )
             if (invoice != null) {
                 lastSaleDetails.value = LastSaleDetails(
                     clientName = client.name,
@@ -141,7 +144,10 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
     ) {
         if (quantity > inventoryItem.current_stock || quantity <= 0) return
         viewModelScope.launch {
-            repository.registerWaste(currentDate, inventoryItem.id, quantity, reason, causa, etapa)
+            val warehouseId = activeWarehouseId.first()
+            repository.registerWaste(
+                currentDate, inventoryItem.id, quantity, reason, causa, etapa, warehouseId
+            )
         }
     }
 
@@ -210,7 +216,9 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
 
     fun addStock(inventoryId: Int, quantity: Int) {
         if (quantity <= 0) return
-        viewModelScope.launch { repository.addStock(inventoryId, quantity) }
+        viewModelScope.launch {
+            repository.addStock(inventoryId, quantity, activeWarehouseId.first())
+        }
     }
 
     fun updateCatalog(inventoryId: Int, cabys: String, unit: String) {
@@ -244,8 +252,9 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
     ) {
         if (quantity <= 0 || costTotal < 0) return
         viewModelScope.launch {
+            val warehouseId = activeWarehouseId.first()
             repository.registerLot(
-                currentDate, inventoryId, supplier.trim(), variedad.trim(),
+                currentDate, inventoryId, warehouseId, supplier.trim(), variedad.trim(),
                 calibre.trim(), calidad.trim(), quantity, costTotal, shelfLifeDays
             )
             onDone()
@@ -313,6 +322,89 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
+    // --- Bodega activa -------------------------------------------------------------------
+
+    val warehouses: StateFlow<List<com.example.data.Warehouse>> =
+        repository.getWarehouses()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /** Bodega donde se venden/merman/compran (id, default 1 = Tramo Principal). */
+    val activeWarehouseId: StateFlow<Int> =
+        repository.getSetting("active_warehouse")
+            .map { it?.toIntOrNull() ?: 1 }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = 1
+            )
+
+    /** Stock por producto en la bodega activa (para validar y mostrar). */
+    val activeStock: StateFlow<Map<Int, Int>> =
+        kotlinx.coroutines.flow.combine(
+            activeWarehouseId,
+            repository.getStockMatrix()
+        ) { activeId, matrix ->
+            matrix.filter { it.warehouseId == activeId }
+                .associate { it.inventoryId to it.quantity }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
+    fun setActiveWarehouse(id: Int) {
+        viewModelScope.launch { repository.setActiveWarehouse(id) }
+    }
+
+    fun addWarehouse(name: String, onDone: () -> Unit = {}) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            val id = repository.addWarehouse(name.trim())
+            repository.setActiveWarehouse(id.toInt())
+            onDone()
+        }
+    }
+
+    fun stockMatrix(): StateFlow<List<com.example.data.WarehouseStockDetail>> =
+        repository.getStockMatrix()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    fun transfersToday(): StateFlow<List<com.example.data.Transfer>> =
+        repository.getTransfers(currentDate)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /**
+     * Traslado entre bodegas (no toca caja). onDone(true) si se movió.
+     */
+    fun registerTransfer(
+        toWarehouseId: Int,
+        inventoryId: Int,
+        quantity: Int,
+        note: String = "",
+        onDone: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val from = activeWarehouseId.first()
+            onDone(
+                repository.registerTransfer(
+                    currentDate, from, toWarehouseId, inventoryId, quantity, note.trim()
+                ) != null
+            )
+        }
+    }
+
     // --- Compras y arqueo ---------------------------------------------------------------
 
     /**
@@ -335,9 +427,10 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
             return
         }
         viewModelScope.launch {
+            val warehouseId = activeWarehouseId.first()
             onDone(
                 repository.registerPurchase(
-                    currentDate, inventoryId, supplier.trim(), variedad.trim(),
+                    currentDate, inventoryId, warehouseId, supplier.trim(), variedad.trim(),
                     calibre.trim(), calidad.trim(), quantity, costTotal, shelfLifeDays
                 ) != null
             )

@@ -56,8 +56,9 @@ class DashboardRepository(private val appDao: AppDao) {
         clientId: Int,
         inventoryId: Int,
         quantity: Int,
-        isCredit: Boolean = false
-    ): Invoice? = appDao.processSale(date, clientId, inventoryId, quantity, isCredit)
+        isCredit: Boolean = false,
+        warehouseId: Int
+    ): Invoice? = appDao.processSale(date, clientId, inventoryId, quantity, isCredit, warehouseId)
 
     /** Registra un gasto operativo (reduce caja y ganancia real). */
     suspend fun registerExpense(
@@ -81,8 +82,9 @@ class DashboardRepository(private val appDao: AppDao) {
         quantity: Int,
         reason: String,
         causa: String = "",
-        etapa: String = ""
-    ): Waste? = appDao.processWaste(date, inventoryId, quantity, reason, causa, etapa)
+        etapa: String = "",
+        warehouseId: Int
+    ): Waste? = appDao.processWaste(date, inventoryId, quantity, reason, causa, etapa, warehouseId)
 
     fun getExpiringLots(upto: String): Flow<List<LotAlert>> = appDao.getExpiringLots(upto)
 
@@ -126,8 +128,9 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun updatePrices(inventoryId: Int, salePrice: Double, costPrice: Double) =
         appDao.updatePrices(inventoryId, salePrice, costPrice)
 
-    /** Entrada de mercadería: suma stock inicial y actual. */
-    suspend fun addStock(inventoryId: Int, quantity: Int) = appDao.addStock(inventoryId, quantity)
+    /** Entrada de mercadería: suma stock global y de la bodega dada. */
+    suspend fun addStock(inventoryId: Int, quantity: Int, warehouseId: Int) =
+        appDao.stockEntry(inventoryId, quantity, warehouseId)
 
     suspend fun updateCatalog(inventoryId: Int, cabys: String, unit: String) =
         appDao.updateCatalog(inventoryId, cabys, unit)
@@ -135,14 +138,14 @@ class DashboardRepository(private val appDao: AppDao) {
     // --- Lotes ----------------------------------------------------------------
 
     fun getLotsForProduct(inventoryId: Int): Flow<List<Lot>> =
-        appDao.getLotsForProduct(inventoryId)
-    /**
+        appDao.getLotsForProduct(inventoryId)    /**
      * Registra entrada de lote con vencimiento (fecha_limite = ingreso + días
      * de vida útil) y suma el stock. Devuelve el id del lote.
      */
     suspend fun registerLot(
         date: String,
         inventoryId: Int,
+        warehouseId: Int,
         supplier: String,
         variedad: String,
         calibre: String,
@@ -155,8 +158,10 @@ class DashboardRepository(private val appDao: AppDao) {
         val limite = ingreso.plusDays(shelfLifeDays.coerceAtLeast(1).toLong())
         return appDao.registerLotEntry(
             inventoryId,
+            warehouseId,
             Lot(
                 inventory_id = inventoryId,
+                warehouse_id = warehouseId,
                 supplier = supplier,
                 variedad = variedad,
                 calibre = calibre,
@@ -205,6 +210,7 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun registerPurchase(
         date: String,
         inventoryId: Int,
+        warehouseId: Int,
         supplier: String,
         variedad: String,
         calibre: String,
@@ -213,10 +219,41 @@ class DashboardRepository(private val appDao: AppDao) {
         costTotal: Double,
         shelfLifeDays: Int
     ): Long? = appDao.processPurchase(
-        date, inventoryId, supplier, variedad, calibre, calidad, quantity, costTotal, shelfLifeDays
+        date, inventoryId, warehouseId, supplier, variedad, calibre, calidad,
+        quantity, costTotal, shelfLifeDays
     )
 
     suspend fun insertCashCount(count: CashCount): Long = appDao.insertCashCount(count)
 
     fun getCashCounts(date: String): Flow<List<CashCount>> = appDao.getCashCounts(date)
+
+    // --- Bodegas ---------------------------------------------------------------------
+
+    fun getWarehouses(): Flow<List<Warehouse>> = appDao.getWarehouses()
+
+    suspend fun addWarehouse(name: String, location: String = ""): Long =
+        appDao.insertWarehouse(Warehouse(name = name, location = location))
+
+    fun getSetting(key: String): Flow<String?> = appDao.getSetting(key)
+
+    suspend fun setActiveWarehouse(id: Int) =
+        appDao.setSetting(Setting(key = "active_warehouse", value = id.toString()))
+
+    fun getWarehouseStock(warehouseId: Int): Flow<List<WarehouseStock>> =
+        appDao.getWarehouseStock(warehouseId)
+
+    fun getStockMatrix(): Flow<List<WarehouseStockDetail>> = appDao.getStockMatrix()
+
+    fun getTransfers(date: String): Flow<List<Transfer>> = appDao.getTransfers(date)
+
+    suspend fun registerTransfer(
+        date: String,
+        fromWarehouseId: Int,
+        toWarehouseId: Int,
+        inventoryId: Int,
+        quantity: Int,
+        note: String
+    ): Transfer? = appDao.processTransfer(
+        date, fromWarehouseId, toWarehouseId, inventoryId, quantity, note
+    )
 }

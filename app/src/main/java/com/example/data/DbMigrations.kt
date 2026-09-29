@@ -80,8 +80,7 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
 /**
  * Migración v6 → v7 (arqueo de caja). Solo tabla nueva, sin tocar datos.
  */
-val MIGRATION_6_7 = object : Migration(6, 7) {
-    override fun migrate(db: SupportSQLiteDatabase) {
+val MIGRATION_6_7 = object : Migration(6, 7) {    override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS cash_counts (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
@@ -93,5 +92,53 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
                 "timestamp INTEGER NOT NULL DEFAULT 0)"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS index_cash_counts_date ON cash_counts(ledger_date)")
+    }
+}
+
+/**
+ * Migración v7 → v8 (multi-bodega). Crea bodegas/stock/traslados/settings y
+ * siembra "Tramo Principal" (id 1, primera fila AUTOINCREMENT) como bodega
+ * activa, repartiendo el stock global actual en ella. Sin pérdida de datos.
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS warehouses (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "name TEXT NOT NULL, " +
+                "location TEXT NOT NULL DEFAULT '')"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS warehouse_stock (" +
+                "warehouse_id INTEGER NOT NULL, " +
+                "inventory_id INTEGER NOT NULL, " +
+                "quantity INTEGER NOT NULL DEFAULT 0, " +
+                "PRIMARY KEY(warehouse_id, inventory_id))"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_wh_stock_product ON warehouse_stock(inventory_id)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS transfers (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "from_warehouse_id INTEGER NOT NULL, " +
+                "to_warehouse_id INTEGER NOT NULL, " +
+                "inventory_id INTEGER NOT NULL, " +
+                "quantity INTEGER NOT NULL, " +
+                "ledger_date TEXT NOT NULL, " +
+                "note TEXT NOT NULL DEFAULT '', " +
+                "timestamp INTEGER NOT NULL DEFAULT 0)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_date ON transfers(ledger_date)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS settings (" +
+                "`key` TEXT PRIMARY KEY NOT NULL, " +
+                "`value` TEXT NOT NULL DEFAULT '')"
+        )
+        db.execSQL("ALTER TABLE lots ADD COLUMN warehouse_id INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("INSERT INTO warehouses (name, location) VALUES ('Tramo Principal', '')")
+        db.execSQL(
+            "INSERT INTO warehouse_stock (warehouse_id, inventory_id, quantity) " +
+                "SELECT 1, id, current_stock FROM inventory"
+        )
+        db.execSQL("INSERT OR REPLACE INTO settings (`key`, `value`) VALUES ('active_warehouse', '1')")
     }
 }

@@ -16,9 +16,13 @@ import androidx.room.TypeConverters
         Waste::class,
         Payment::class,
         Lot::class,
-        CashCount::class
+        CashCount::class,
+        Warehouse::class,
+        WarehouseStock::class,
+        Transfer::class,
+        Setting::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -35,7 +39,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "nortex_database"
-                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build()
                 INSTANCE = instance
                 instance
             }

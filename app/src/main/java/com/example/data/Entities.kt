@@ -196,6 +196,58 @@ data class LotAlert(
     val fecha_limite: String
 )
 
+/** Bodega o tramo (punto de stock). */
+@Entity(tableName = "warehouses")
+data class Warehouse(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val location: String = ""
+)
+
+/** Stock de un producto en una bodega (fuente de verdad operativa). */
+@Entity(
+    tableName = "warehouse_stock",
+    primaryKeys = ["warehouse_id", "inventory_id"],
+    indices = [Index("inventory_id")]
+)
+data class WarehouseStock(
+    val warehouse_id: Int,
+    val inventory_id: Int,
+    val quantity: Int = 0
+)
+
+/** Traslado de mercadería entre bodegas (no toca caja). */
+@Entity(
+    tableName = "transfers",
+    indices = [Index("ledger_date")]
+)
+data class Transfer(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val from_warehouse_id: Int,
+    val to_warehouse_id: Int,
+    val inventory_id: Int,
+    val quantity: Int,
+    val ledger_date: String,
+    val note: String = "",
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+/** Stock por bodega con nombres (no es tabla). */
+data class WarehouseStockDetail(
+    val warehouseId: Int,
+    val warehouseName: String,
+    val inventoryId: Int,
+    val itemName: String,
+    val quantity: Int
+)
+
+/** Ajuste simple clave-valor (bodega activa, etc.). */
+@Entity(tableName = "settings")
+data class Setting(
+    @PrimaryKey val key: String,
+    val value: String = ""
+)
+
 /** Arqueo de caja: conteo físico vs esperado del sistema (no es ajuste). */
 @Entity(
     tableName = "cash_counts",
@@ -236,6 +288,8 @@ data class DateTotal(
 data class Lot(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val inventory_id: Int,
+    /** Bodega donde está físicamente el lote (FEFO por bodega). */
+    val warehouse_id: Int = 1,
     val supplier: String = "",
     val variedad: String = "",
     val calibre: String = "",
