@@ -105,6 +105,7 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
     val warehouses by viewModel.warehouses.collectAsStateWithLifecycle()
     val activeWarehouseId by viewModel.activeWarehouseId.collectAsStateWithLifecycle()
     val activeStock by viewModel.activeStock.collectAsStateWithLifecycle()
+    val priceRules by viewModel.priceRules.collectAsStateWithLifecycle()
 
     var activeDialog by remember { mutableStateOf<QuickAction?>(null) }
 
@@ -200,7 +201,10 @@ fun DashboardScreen(viewModel: DashboardViewModel, financialViewModel: Financial
             format = format,
             creditBalances = creditBalances,
             activeStock = activeStock,
-            onConfirm = { client, item, qty, isCredit -> viewModel.processSale(client, item, qty, isCredit) },
+            priceRules = priceRules,
+            onConfirm = { client, item, qty, isCredit, unitPrice ->
+                viewModel.processSale(client, item, qty, isCredit, unitPrice)
+            },
             onAddClient = { name, phone, limit, type, onAdded -> viewModel.addClient(name, phone, limit, type, onAdded) },
             onDismiss = { activeDialog = null }
         )
@@ -846,7 +850,8 @@ private fun SaleDialog(
     format: NumberFormat,
     creditBalances: Map<Int, Double>,
     activeStock: Map<Int, Int>,
-    onConfirm: (Client, Inventory, Int, Boolean) -> Unit,
+    priceRules: List<com.example.data.PriceRule>,
+    onConfirm: (Client, Inventory, Int, Boolean, Double?) -> Unit,
     onAddClient: (String, String, Double, String, (Client) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -880,8 +885,15 @@ private fun SaleDialog(
     // Stock de la bodega activa (el DAO lo revalida; sin fila = 0).
     val activeQty = selectedInventory?.let { activeStock[it.id] } ?: 0
     val stockError = selectedInventory != null && quantity > activeQty
+    // Precio por canal del cliente (si no hay regla, base). Se congela en factura.
+    val channelRule = if (selectedClient != null && selectedInventory != null) {
+        priceRules.firstOrNull {
+            it.inventory_id == selectedInventory!!.id && it.channel == selectedClient!!.type
+        }?.price
+    } else null
+    val unitPrice = channelRule ?: (selectedInventory?.sale_price ?: 0.0)
     // Fiado: exige cupo y bloquea si saldo + total excede el límite.
-    val saleTotal = quantity * (selectedInventory?.sale_price ?: 0.0)
+    val saleTotal = quantity * unitPrice
     val clientBalance = selectedClient?.let { creditBalances[it.id] ?: 0.0 } ?: 0.0
     val creditBlocked = isCredit && selectedClient != null &&
         (selectedClient?.credit_limit ?: 0.0) <= 0.0
@@ -1045,10 +1057,11 @@ private fun SaleDialog(
                 val item = selectedInventory
                 if (item != null && quantity > 0 && !stockError) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    val total = quantity * item.sale_price
+                    val total = quantity * unitPrice
                     val cost = quantity * item.purchase_price
                     Text(
-                        "Total: ${format.format(total)} · Ganancia bruta: ${format.format(total - cost)}",
+                        "Total: ${format.format(total)} · Ganancia bruta: ${format.format(total - cost)}" +
+                            if (channelRule != null) " · Precio ${selectedClient?.type}" else "",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = CustomOnSuccessVariant
@@ -1061,11 +1074,11 @@ private fun SaleDialog(
                 onClick = {
                     val client = selectedClient ?: return@Button
                     val item = selectedInventory ?: return@Button
-                    onConfirm(client, item, quantity, isCredit)
+                    onConfirm(client, item, quantity, isCredit, unitPrice)
 
                     val clientName = client.name
                     val itemName = item.item_name
-                    val salePrice = item.sale_price
+                    val salePrice = unitPrice
                     val totalAmount = quantity * salePrice
 
                     val printLogic = {

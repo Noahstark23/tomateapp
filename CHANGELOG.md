@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## v0.8.0-turnos-precios (loop continuo)
+- **Turnos de caja**: apertura con caja inicial, tarjeta de turno abierto en vivo
+  y cierre con conteo + diferencia + historial. E2E: apertura ₡200 000 → cierre
+  contado ₡206 500, dif. ₡0 ("Turno 17:48–17:59").
+- **Precios por canal** (FERIA/SODA/SUPER por producto, vacío = base): la venta
+  resuelve el precio por tipo de cliente y lo congela en factura. E2E: FERIA
+  ₡6 500 en Primera → venta a FeriaZapote total ₡6 500, factura guarda 6500.
+- Migración v8→v9 (`cash_shifts`, `price_rules`, schema `9.json`). OJO: el primer
+  DDL con DEFAULTs fue rechazado por Room — ahora se copia exacto del schema
+  generado. 26/26 tests verdes.
+
 ## v0.7.0-multibodega (loop continuo)
 - **Multi-bodega**: `warehouses` + `warehouse_stock` + `transfers` + `settings`
   (bodega activa), migración 7→8 que siembra Tramo Principal y reparte el stock

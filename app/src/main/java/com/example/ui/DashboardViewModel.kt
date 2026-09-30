@@ -108,13 +108,19 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
         }
     }
 
-    fun processSale(client: Client, inventoryItem: Inventory, quantity: Int, isCredit: Boolean = false) {
+    fun processSale(
+        client: Client,
+        inventoryItem: Inventory,
+        quantity: Int,
+        isCredit: Boolean = false,
+        unitPrice: Double? = null
+    ) {
         if (quantity > inventoryItem.current_stock || quantity <= 0) return
 
         viewModelScope.launch {
             val warehouseId = activeWarehouseId.first()
             val invoice = repository.registerSale(
-                currentDate, client.id, inventoryItem.id, quantity, isCredit, warehouseId
+                currentDate, client.id, inventoryItem.id, quantity, isCredit, warehouseId, unitPrice
             )
             if (invoice != null) {
                 lastSaleDetails.value = LastSaleDetails(
@@ -457,6 +463,62 @@ class DashboardViewModel(private val repository: DashboardRepository) : ViewMode
                     note = note.trim()
                 )
             )
+        }
+    }
+
+    // --- Turnos ----------------------------------------------------------------------------
+
+    val openShift: StateFlow<com.example.data.CashShift?> =
+        repository.getOpenShift()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = null
+            )
+
+    fun shiftsToday(): StateFlow<List<com.example.data.CashShift>> =
+        repository.getShifts(currentDate)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    fun openShift(openingCash: Double, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.openShift(currentDate, openingCash)
+            onDone()
+        }
+    }
+
+    fun closeShift(
+        shift: com.example.data.CashShift,
+        expectedCash: Double,
+        countedCash: Double,
+        note: String
+    ) {
+        viewModelScope.launch {
+            repository.closeShift(shift, expectedCash, countedCash, note)
+        }
+    }
+
+    // --- Precios por canal --------------------------------------------------------------------
+
+    val priceRules: StateFlow<List<com.example.data.PriceRule>> =
+        repository.getPriceRules()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    /** Precio vigente: regla del canal o base si no hay. */
+    fun priceFor(rules: List<com.example.data.PriceRule>, inventoryId: Int, channel: String, base: Double): Double =
+        rules.firstOrNull { it.inventory_id == inventoryId && it.channel == channel }?.price ?: base
+
+    fun saveChannelPrices(inventoryId: Int, prices: Map<String, Double?>) {
+        viewModelScope.launch {
+            prices.forEach { (channel, price) -> repository.savePriceRule(inventoryId, channel, price) }
         }
     }
 

@@ -511,6 +511,35 @@ interface AppDao {
     fun getCashCounts(date: String): Flow<List<CashCount>>
 
     // ---------------------------------------------------------------------
+    // Turnos de caja
+    // ---------------------------------------------------------------------
+
+    @Insert
+    suspend fun insertShift(shift: CashShift): Long
+
+    @Update
+    suspend fun updateShift(shift: CashShift)
+
+    @Query("SELECT * FROM cash_shifts WHERE closed_at = 0 ORDER BY opened_at DESC LIMIT 1")
+    fun getOpenShift(): Flow<CashShift?>
+
+    @Query("SELECT * FROM cash_shifts WHERE ledger_date = :date ORDER BY opened_at DESC")
+    fun getShifts(date: String): Flow<List<CashShift>>
+
+    // ---------------------------------------------------------------------
+    // Precios por canal
+    // ---------------------------------------------------------------------
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPriceRule(rule: PriceRule)
+
+    @Query("DELETE FROM price_rules WHERE inventory_id = :inventoryId AND channel = :channel")
+    suspend fun deletePriceRule(inventoryId: Int, channel: String)
+
+    @Query("SELECT * FROM price_rules")
+    fun getPriceRules(): Flow<List<PriceRule>>
+
+    // ---------------------------------------------------------------------
     // Transacciones de negocio
     // ---------------------------------------------------------------------
 
@@ -574,14 +603,17 @@ interface AppDao {
         inventoryId: Int,
         quantity: Int,
         isCredit: Boolean = false,
-        warehouseId: Int
+        warehouseId: Int,
+        unitPrice: Double? = null
     ): Invoice? {
         val item = getInventoryByIdSync(inventoryId) ?: return null
         if (quantity <= 0 || quantity > item.current_stock) return null
         ensureStockRow(warehouseId, inventoryId)
         if (warehouseQty(warehouseId, inventoryId) < quantity) return null
 
-        val totalAmount = quantity * item.sale_price
+        // Precio por canal si viene (si no, base). Se congela en la factura.
+        val price = unitPrice?.takeIf { it > 0 } ?: item.sale_price
+        val totalAmount = quantity * price
         if (isCredit) {
             val client = getClientByIdSync(clientId) ?: return null
             if (client.credit_limit <= 0) return null
@@ -600,7 +632,7 @@ interface AppDao {
             client_id = clientId,
             inventory_id = inventoryId,
             quantity = quantity,
-            unit_price = item.sale_price,
+            unit_price = price,
             unit_cost = item.purchase_price,
             total_amount = totalAmount,
             total_cost = totalCost,

@@ -263,6 +263,37 @@ data class CashCount(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/** Turno de caja: apertura y cierre con conteo (uno abierto a la vez). */
+@Entity(
+    tableName = "cash_shifts",
+    indices = [Index("ledger_date")]
+)
+data class CashShift(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ledger_date: String,
+    val opened_at: Long = System.currentTimeMillis(),
+    /** 0 = abierto. */
+    val closed_at: Long = 0L,
+    val opening_cash: Double = 0.0,
+    val expected_cash: Double = 0.0,
+    val counted_cash: Double = 0.0,
+    val diff: Double = 0.0,
+    val note: String = ""
+)
+
+/** Precio por canal: producto + tipo de cliente → precio (vacío = base). */
+@Entity(
+    tableName = "price_rules",
+    primaryKeys = ["inventory_id", "channel"],
+    indices = [Index("inventory_id")]
+)
+data class PriceRule(
+    val inventory_id: Int,
+    /** TRAMO, FERIA, SODA, SUPER, PROVEEDOR. */
+    val channel: String,
+    val price: Double
+)
+
 /** Merma del día agrupada por causa codificada (no es tabla). */
 data class WasteCauseTotal(
     val causa: String,

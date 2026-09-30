@@ -50,15 +50,18 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun setInitialInvestment(date: String, investment: Double) =
         appDao.setInitialInvestment(date, investment)
 
-    /** Registra una venta congelando el costo vigente. Null si no hay stock o cupo. */
+    /** Registra una venta congelando costo y precio (canal). Null si no hay stock o cupo. */
     suspend fun registerSale(
         date: String,
         clientId: Int,
         inventoryId: Int,
         quantity: Int,
         isCredit: Boolean = false,
-        warehouseId: Int
-    ): Invoice? = appDao.processSale(date, clientId, inventoryId, quantity, isCredit, warehouseId)
+        warehouseId: Int,
+        unitPrice: Double? = null
+    ): Invoice? = appDao.processSale(
+        date, clientId, inventoryId, quantity, isCredit, warehouseId, unitPrice
+    )
 
     /** Registra un gasto operativo (reduce caja y ganancia real). */
     suspend fun registerExpense(
@@ -226,6 +229,35 @@ class DashboardRepository(private val appDao: AppDao) {
     suspend fun insertCashCount(count: CashCount): Long = appDao.insertCashCount(count)
 
     fun getCashCounts(date: String): Flow<List<CashCount>> = appDao.getCashCounts(date)
+
+    // --- Turnos ------------------------------------------------------------------------
+
+    suspend fun openShift(date: String, openingCash: Double): Long =
+        appDao.insertShift(CashShift(ledger_date = date, opening_cash = openingCash))
+
+    suspend fun closeShift(shift: CashShift, expectedCash: Double, countedCash: Double, note: String) =
+        appDao.updateShift(
+            shift.copy(
+                closed_at = System.currentTimeMillis(),
+                expected_cash = expectedCash,
+                counted_cash = countedCash,
+                diff = countedCash - expectedCash,
+                note = note.trim()
+            )
+        )
+
+    fun getOpenShift(): Flow<CashShift?> = appDao.getOpenShift()
+
+    fun getShifts(date: String): Flow<List<CashShift>> = appDao.getShifts(date)
+
+    // --- Precios por canal ---------------------------------------------------------------
+
+    fun getPriceRules(): Flow<List<PriceRule>> = appDao.getPriceRules()
+
+    suspend fun savePriceRule(inventoryId: Int, channel: String, price: Double?) {
+        if (price == null || price <= 0) appDao.deletePriceRule(inventoryId, channel)
+        else appDao.upsertPriceRule(PriceRule(inventoryId, channel, price))
+    }
 
     // --- Bodegas ---------------------------------------------------------------------
 

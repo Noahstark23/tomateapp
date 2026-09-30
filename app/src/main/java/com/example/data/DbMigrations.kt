@@ -96,6 +96,43 @@ val MIGRATION_6_7 = object : Migration(6, 7) {    override fun migrate(db: Suppo
 }
 
 /**
+ * Migración v8 → v9 (turnos + precios por canal). DDL copiado exacto del
+ * schema generado (app/schemas/.../9.json): sin DEFAULTs y con los nombres
+ * de índice de Room, porque la validación compara columna por columna.
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS cash_shifts (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`ledger_date` TEXT NOT NULL, " +
+                "`opened_at` INTEGER NOT NULL, " +
+                "`closed_at` INTEGER NOT NULL, " +
+                "`opening_cash` REAL NOT NULL, " +
+                "`expected_cash` REAL NOT NULL, " +
+                "`counted_cash` REAL NOT NULL, " +
+                "`diff` REAL NOT NULL, " +
+                "`note` TEXT NOT NULL)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_cash_shifts_ledger_date " +
+                "ON cash_shifts (ledger_date)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS price_rules (" +
+                "`inventory_id` INTEGER NOT NULL, " +
+                "`channel` TEXT NOT NULL, " +
+                "`price` REAL NOT NULL, " +
+                "PRIMARY KEY(inventory_id, channel))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_price_rules_inventory_id " +
+                "ON price_rules (inventory_id)"
+        )
+    }
+}
+
+/**
  * Migración v7 → v8 (multi-bodega). Crea bodegas/stock/traslados/settings y
  * siembra "Tramo Principal" (id 1, primera fila AUTOINCREMENT) como bodega
  * activa, repartiendo el stock global actual en ella. Sin pérdida de datos.

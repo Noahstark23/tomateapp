@@ -478,9 +478,13 @@ fun ReportsScreen(viewModel: DashboardViewModel) {
     editingItem?.let { item ->
         EditProductDialog(
             item = item,
-            onConfirm = { sale, cost, entry, cabys, unit ->
+            channelPrices = viewModel.priceRules.collectAsStateWithLifecycle().value
+                .filter { it.inventory_id == item.id }
+                .associate { it.channel to it.price },
+            onConfirm = { sale, cost, entry, cabys, unit, channelPrices ->
                 viewModel.updatePrices(item.id, sale, cost)
                 viewModel.updateCatalog(item.id, cabys, unit)
+                viewModel.saveChannelPrices(item.id, channelPrices)
                 if (entry > 0) viewModel.addStock(item.id, entry)
                 editingItem = null
             },
@@ -541,11 +545,12 @@ private fun AddProductDialog(
     )
 }
 
-/** Edita precios vigentes, CABYS/unidad FE y registra entrada de mercadería. */
+/** Edita precios vigentes, CABYS/unidad FE, precios por canal y entradas. */
 @Composable
 private fun EditProductDialog(
     item: Inventory,
-    onConfirm: (Double, Double, Int, String, String) -> Unit,
+    channelPrices: Map<String, Double>,
+    onConfirm: (Double, Double, Int, String, String, Map<String, Double?>) -> Unit,
     onDismiss: () -> Unit
 ) {
     var saleStr by remember { mutableStateOf(item.sale_price.toString()) }
@@ -553,6 +558,9 @@ private fun EditProductDialog(
     var entryStr by remember { mutableStateOf("") }
     var cabys by remember { mutableStateOf(item.cabys) }
     var unit by remember { mutableStateOf(item.unit.ifEmpty { "Unid" }) }
+    var feriaStr by remember { mutableStateOf(channelPrices["FERIA"]?.toString() ?: "") }
+    var sodaStr by remember { mutableStateOf(channelPrices["SODA"]?.toString() ?: "") }
+    var superStr by remember { mutableStateOf(channelPrices["SUPER"]?.toString() ?: "") }
 
     val sale = saleStr.toDoubleOrNull()
     val cost = costStr.toDoubleOrNull()
@@ -579,11 +587,37 @@ private fun EditProductDialog(
                 ProductNumberField("CABYS Hacienda", cabys, { cabys = it }, KeyboardType.Text)
                 Spacer(modifier = Modifier.height(8.dp))
                 ProductNumberField("Unidad (Unid/kg/Caja)", unit, { unit = it }, KeyboardType.Text)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Precios por canal (vacío = precio base)",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        ProductNumberField("Feria", feriaStr, { feriaStr = it }, KeyboardType.Number)
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        ProductNumberField("Soda", sodaStr, { sodaStr = it }, KeyboardType.Number)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                ProductNumberField("Súper", superStr, { superStr = it }, KeyboardType.Number)
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(sale!!, cost!!, entry, cabys, unit.ifBlank { "Unid" }) },
+                onClick = {
+                    onConfirm(
+                        sale!!, cost!!, entry, cabys, unit.ifBlank { "Unid" },
+                        mapOf(
+                            "FERIA" to feriaStr.toDoubleOrNull(),
+                            "SODA" to sodaStr.toDoubleOrNull(),
+                            "SUPER" to superStr.toDoubleOrNull()
+                        )
+                    )
+                },
                 enabled = canConfirm,
                 shape = RoundedCornerShape(12.dp)
             ) { Text("Guardar") }

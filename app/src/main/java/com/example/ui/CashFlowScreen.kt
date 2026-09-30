@@ -44,8 +44,11 @@ import java.util.Locale
 fun CashFlowScreen(financialViewModel: FinancialViewModel, viewModel: DashboardViewModel) {
     val state by financialViewModel.cashFlowState.collectAsStateWithLifecycle()
     val cashCounts by viewModel.cashCounts().collectAsStateWithLifecycle()
+    val openShift by viewModel.openShift.collectAsStateWithLifecycle()
+    val shifts by viewModel.shiftsToday().collectAsStateWithLifecycle()
     val format = remember { NumberFormat.getCurrencyInstance(Locale("es", "CR")) }
     var showArqueo by remember { mutableStateOf(false) }
+    var showCloseShift by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -219,6 +222,44 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel, viewModel: DashboardV
                 }
             }
 
+            // Turno de caja: apertura y cierre con conteo.
+            item {
+                val shift = openShift
+                if (shift == null) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { viewModel.openShift(state.currentCash) },
+                        enabled = state.hasLedger,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("🕒 Abrir turno (caja ${format.format(state.currentCash)})")
+                    }
+                } else {
+                    CashCard(
+                        title = "TURNO ABIERTO · ${shiftTime(shift.opened_at)}",
+                        subtitle = "Caja inicial ${format.format(shift.opening_cash)} · actual ${format.format(state.currentCash)}",
+                        rows = emptyList(),
+                        emptyText = null
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { showCloseShift = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("🔒 Cerrar turno", fontWeight = FontWeight.Medium)
+                    }
+                }
+                shifts.filter { it.closed_at != 0L }.take(3).forEach { s ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Turno ${shiftTime(s.opened_at)}–${shiftTime(s.closed_at)}: contado ${format.format(s.counted_cash)} (dif. ${format.format(s.diff)})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             // Predicción simple 7 días + alerta de quiebre.
             item {
                 Card(
@@ -295,6 +336,28 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel, viewModel: DashboardV
             onDismiss = { showArqueo = false }
         )
     }
+
+    val shift = openShift
+    if (showCloseShift && shift != null) {
+        ArqueoDialog(
+            expected = state.currentCash,
+            format = format,
+            title = "Cerrar turno",
+            confirmText = "Cerrar turno",
+            onConfirm = { counted, note ->
+                viewModel.closeShift(shift, state.currentCash, counted, note)
+                showCloseShift = false
+            },
+            onDismiss = { showCloseShift = false }
+        )
+    }
+}
+
+private fun shiftTime(millis: Long): String = try {
+    java.text.SimpleDateFormat("HH:mm", Locale("es", "CR"))
+        .format(java.util.Date(millis))
+} catch (e: Exception) {
+    "--:--"
 }
 
 /**
@@ -305,6 +368,8 @@ fun CashFlowScreen(financialViewModel: FinancialViewModel, viewModel: DashboardV
 private fun ArqueoDialog(
     expected: Double,
     format: NumberFormat,
+    title: String = "Arqueo de caja",
+    confirmText: String = "Guardar arqueo",
     onConfirm: (Double, String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -315,7 +380,7 @@ private fun ArqueoDialog(
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Arqueo de caja", fontWeight = FontWeight.Bold) },
+        title = { Text(title, fontWeight = FontWeight.Bold) },
         text = {
             Column {
                 Text(
@@ -362,7 +427,7 @@ private fun ArqueoDialog(
                 onClick = { if (counted != null) onConfirm(counted, note) },
                 enabled = counted != null && counted >= 0,
                 shape = RoundedCornerShape(12.dp)
-            ) { Text("Guardar arqueo") }
+            ) { Text(confirmText) }
         },
         dismissButton = {
             androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancelar") }
